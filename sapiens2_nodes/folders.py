@@ -5,7 +5,6 @@ _FOLDER_SUBDIRS = {
     "sapiens2_seg": "seg",
     "sapiens2_normal": "normal",
     "sapiens2_pointmap": "pointmap",
-    "sapiens2_albedo": "albedo",
     "sapiens2_pose": "pose",
     "sapiens2_detector": "detector",
 }

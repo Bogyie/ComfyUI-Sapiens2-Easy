@@ -25,10 +25,6 @@ _DENSE_CONFIG_TEMPLATES = {
         "sapiens/dense/configs/pointmap/render_people/"
         "{arch}_pointmap_render_people-1024x768.py"
     ),
-    "albedo": (
-        "sapiens/dense/configs/albedo/render_people/"
-        "{arch}_albedo_render_people-1024x768.py"
-    ),
 }
 
 
@@ -154,7 +150,6 @@ def _detect_task(state_dict: Dict[str, torch.Tensor]) -> str:
         "segmentation": "decode_head.conv_seg.weight",
         "normal": "decode_head.conv_normal.weight",
         "pointmap": "decode_head.conv_pointmap.weight",
-        "albedo": "decode_head.conv_albedo.weight",
     }
     for task, key in task_keys.items():
         if key in state_dict:
