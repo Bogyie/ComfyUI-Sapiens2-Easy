@@ -165,7 +165,10 @@ def _get_detector(pose_model: Sapiens2PoseModel):
     try:
         from transformers import DetrForObjectDetection, DetrImageProcessor
     except Exception as exc:
-        raise RuntimeError("transformers is required for Sapiens2 pose person detection.") from exc
+        raise RuntimeError(
+            "Could not import transformers for Sapiens2 pose person detection. "
+            f"Original import error: {exc}"
+        ) from exc
 
     processor = DetrImageProcessor.from_pretrained(pose_model.detector_path)
     detector = DetrForObjectDetection.from_pretrained(pose_model.detector_path).eval().to(pose_model.device)

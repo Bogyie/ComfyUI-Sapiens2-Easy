@@ -20,6 +20,8 @@ python install.py --install-deps
 
 `install.py --install-deps` installs this node's requirements with a temporary constraints file that pins the currently installed `torch`, `torchvision`, `torchaudio`, `xformers`, `triton`, and NVIDIA CUDA wheel versions. If pip tries to change that stack, installation fails instead of silently replacing the ComfyUI build.
 
+After pip finishes, `install.py` imports the runtime packages listed in `requirements.txt` so missing packages such as `accelerate`, `transformers`, `timm`, or `tqdm` are caught during installation instead of later inside a node run.
+
 `install.py` also clones the official Sapiens2 repo into `vendor/sapiens2`. You can skip that clone with `python install.py --install-deps --skip-clone`, then set `SAPIENS2_REPO=/path/to/facebookresearch/sapiens2` or fill `sapiens_repo_path` in the loader node.
 
 The official Sapiens2 project currently lists Python 3.12+ and PyTorch 2.7+ as its supported environment. These nodes do not force-install PyTorch, so keep the ComfyUI PyTorch build that matches your CUDA/MPS setup.
@@ -39,6 +41,8 @@ If ComfyUI already has most dependencies and you want the most conservative inst
 ```bash
 python install.py --install-deps --no-deps
 ```
+
+`--no-deps` still installs the packages listed directly in this repository's `requirements.txt`, but it does not install their transitive dependencies. If the post-install import check reports a missing dependency, rerun without `--no-deps` or install the reported package manually in the ComfyUI venv.
 
 If `install.py --install-deps` says no `torch` package is detected, install the correct ComfyUI PyTorch/CUDA/MPS build first. The `--allow-torch-install` flag exists for fresh experimental environments, but it is not recommended for an existing ComfyUI venv.
 

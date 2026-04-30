@@ -32,7 +32,8 @@ def _candidate_repo_paths(repo_path: str) -> List[Path]:
 
 
 def _ensure_sapiens_importable(repo_path: str) -> None:
-    for candidate in _candidate_repo_paths(repo_path):
+    searched = _candidate_repo_paths(repo_path)
+    for candidate in searched:
         if (candidate / "sapiens").is_dir():
             candidate_path = str(candidate)
             if candidate_path not in sys.path:
@@ -43,10 +44,13 @@ def _ensure_sapiens_importable(repo_path: str) -> None:
         importlib.import_module("sapiens.backbones")
         importlib.import_module("sapiens.dense")
     except Exception as exc:
+        searched_text = ", ".join(str(path) for path in searched)
         raise RuntimeError(
-            "Could not import the official Sapiens2 code. Clone "
-            "https://github.com/facebookresearch/sapiens2 into this custom node's "
-            "vendor/sapiens2 directory, set SAPIENS2_REPO, or pass sapiens_repo_path."
+            "Could not import the official Sapiens2 code. Check that the repo path is "
+            "correct and that its Python dependencies can import in this ComfyUI venv. "
+            "You can clone https://github.com/facebookresearch/sapiens2 into this custom "
+            "node's vendor/sapiens2 directory, set SAPIENS2_REPO, or pass sapiens_repo_path. "
+            f"Searched: {searched_text}. Original import error: {exc}"
         ) from exc
 
 
@@ -141,8 +145,9 @@ def _detect_task(state_dict: Dict[str, torch.Tensor]) -> str:
             return task
     if "decode_head.conv_pose.weight" in state_dict:
         raise ValueError(
-            "This checkpoint is a Sapiens2 pose model. Pose requires detector/top-down "
-            "support and is not handled by the dense model loader yet."
+            "This checkpoint is a Sapiens2 pose model, but the dense model loader was used. "
+            "Load it through Sapiens2 Model with task=pose so the pose detector/top-down "
+            "pipeline is initialized."
         )
     raise ValueError("Could not infer dense task from checkpoint decode_head keys.")
 

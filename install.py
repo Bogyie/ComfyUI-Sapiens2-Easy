@@ -1,4 +1,6 @@
 import argparse
+import importlib
+import re
 import subprocess
 import sys
 import tempfile
@@ -9,6 +11,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 VENDOR = ROOT / "vendor" / "sapiens2"
 REQUIREMENTS = ROOT / "requirements.txt"
+
+IMPORT_NAME_OVERRIDES = {
+    "opencv-python": "cv2",
+    "pillow": "PIL",
+}
 
 TORCH_STACK_PACKAGES = (
     "torch",
@@ -80,6 +87,42 @@ def _check_torch_stack_unchanged(before, allow_new_torch_stack: bool = False):
         raise RuntimeError(f"PyTorch stack changed during install: {details}")
 
 
+def _requirement_package_name(line: str) -> str:
+    line = line.split("#", 1)[0].strip()
+    if not line or line.startswith(("-", "git+", "http://", "https://")):
+        return ""
+    line = line.split(";", 1)[0].strip()
+    line = re.split(r"\s*(?:==|~=|!=|<=|>=|<|>)\s*", line, maxsplit=1)[0]
+    return line.split("[", 1)[0].strip().lower()
+
+
+def _required_imports():
+    imports = []
+    for line in REQUIREMENTS.read_text().splitlines():
+        package = _requirement_package_name(line)
+        if not package:
+            continue
+        imports.append((package, IMPORT_NAME_OVERRIDES.get(package, package.replace("-", "_"))))
+    return imports
+
+
+def _check_required_imports():
+    missing = []
+    for package, import_name in _required_imports():
+        try:
+            importlib.import_module(import_name)
+        except Exception as exc:
+            missing.append(f"{package} ({import_name}): {exc}")
+    if missing:
+        details = "\n  ".join(missing)
+        raise RuntimeError(
+            "Some runtime dependencies could not be imported after installation:\n"
+            f"  {details}\n"
+            "If you used --no-deps, rerun without --no-deps or install the reported "
+            "package/import issue in the ComfyUI venv."
+        )
+
+
 def install_requirements(no_deps: bool = False, allow_torch_install: bool = False):
     if not REQUIREMENTS.exists():
         print(f"No requirements.txt found at {REQUIREMENTS}")
@@ -122,6 +165,7 @@ def install_requirements(no_deps: bool = False, allow_torch_install: bool = Fals
             torch_stack,
             allow_new_torch_stack=allow_torch_install and not torch_stack,
         )
+        _check_required_imports()
     finally:
         constraints_path.unlink(missing_ok=True)
 

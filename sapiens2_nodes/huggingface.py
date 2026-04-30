@@ -93,6 +93,19 @@ def _resolve_hf_args(task: str, model_size: str, repo_id: str, filename: str, lo
     return resolved_repo, resolved_filename, resolved_local_dir
 
 
+def _download_context(kwargs) -> str:
+    repo_id = kwargs.get("repo_id", "<unknown repo>")
+    filename = kwargs.get("filename")
+    revision = kwargs.get("revision")
+    if filename:
+        target = f"{repo_id}/{filename}"
+    else:
+        target = str(repo_id)
+    if revision:
+        target = f"{target}@{revision}"
+    return target
+
+
 def _download_with_hf_client_retry(download_fn, **kwargs):
     try:
         return download_fn(**kwargs)
@@ -105,7 +118,13 @@ def _download_with_hf_client_retry(download_fn, **kwargs):
             _http.close_session()
         except Exception:
             pass
-        return download_fn(**kwargs)
+        try:
+            return download_fn(**kwargs)
+        except Exception as retry_exc:
+            raise RuntimeError(
+                "Hugging Face download failed after resetting a closed HTTP client "
+                f"for {_download_context(kwargs)}: {retry_exc}"
+            ) from retry_exc
 
 
 def download_sapiens2_from_hf(
@@ -123,8 +142,8 @@ def download_sapiens2_from_hf(
         from huggingface_hub import hf_hub_download
     except Exception as exc:
         raise RuntimeError(
-            "huggingface_hub is required for Hugging Face downloads. "
-            "Install this custom node's requirements.txt in the ComfyUI environment."
+            "Could not import huggingface_hub for Hugging Face downloads. "
+            f"Original import error: {exc}"
         ) from exc
 
     resolved_repo, resolved_filename, resolved_local_dir = _resolve_hf_args(
@@ -155,8 +174,8 @@ def download_sapiens2_pose_detector_from_hf(
         from huggingface_hub import snapshot_download
     except Exception as exc:
         raise RuntimeError(
-            "huggingface_hub is required for Hugging Face downloads. "
-            "Install this custom node's requirements.txt in the ComfyUI environment."
+            "Could not import huggingface_hub for Hugging Face downloads. "
+            f"Original import error: {exc}"
         ) from exc
 
     resolved_repo = repo_id.strip() or POSE_DETECTOR_REPO
