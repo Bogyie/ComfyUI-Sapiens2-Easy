@@ -30,7 +30,7 @@ class Sapiens2DenseInference:
         }
 
     RETURN_TYPES = ("IMAGE", "MASK", "MASK", "SAPIENS2_RESULT")
-    RETURN_NAMES = ("image", "foreground_mask", "aux_mask", "raw")
+    RETURN_NAMES = ("image", "foreground_mask", "aux_mask", "result")
     FUNCTION = "run"
     CATEGORY = "Sapiens2"
 
