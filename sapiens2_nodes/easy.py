@@ -360,18 +360,11 @@ def _background_plane_from_pointmap(
     valid = torch.isfinite(points).all(dim=0) & (points[2] > 0)
     scene_points = points.permute(1, 2, 0).reshape(-1, 3)[valid.reshape(-1)]
     if scene_points.numel() == 0:
-        scene_vertices = reference_vertices
-    else:
-        scene_vertices = _orient_pointmap_vertices(
-            scene_points,
-            center=center,
-            flip_y=flip_y,
-            flip_z=flip_z,
-            center_offset=center_offset,
-        )
+        return None
 
-    x_min, y_min = scene_vertices[:, :2].amin(dim=0).tolist()
-    x_max, y_max = scene_vertices[:, :2].amax(dim=0).tolist()
+    rays = scene_points[:, :2] / scene_points[:, 2:3].clamp(min=1e-6)
+    x_min, y_min = rays.amin(dim=0).tolist()
+    x_max, y_max = rays.amax(dim=0).tolist()
     if abs(x_max - x_min) < 1e-6:
         x_min -= 0.5
         x_max += 0.5
@@ -388,11 +381,31 @@ def _background_plane_from_pointmap(
         int(image_shape[1]),
     )
 
-    z = float(reference_vertices[:, 2].min().item() - float(offset)) if flip_z else float(reference_vertices[:, 2].max().item() + float(offset))
-    vertices = np.asarray(
-        [[x_min, y_min, z], [x_max, y_min, z], [x_max, y_max, z], [x_min, y_max, z]],
-        dtype=np.float32,
+    center_vec = (
+        center_offset.detach().cpu().float().reshape(1, 3)
+        if center and center_offset is not None
+        else torch.zeros((1, 3), dtype=torch.float32)
     )
+    axis = _pointmap_axis(flip_y, flip_z, torch.float32).view(1, 3)
+    oriented_z = (
+        float(reference_vertices[:, 2].min().item() - float(offset))
+        if flip_z
+        else float(reference_vertices[:, 2].max().item() + float(offset))
+    )
+    raw_z = (oriented_z + float(center_vec[0, 2])) / float(axis[0, 2])
+    if raw_z <= 1e-6:
+        raw_z = float(scene_points[:, 2].max().item() + abs(float(offset)))
+
+    raw_vertices = torch.tensor(
+        [
+            [x_min * raw_z, y_min * raw_z, raw_z],
+            [x_max * raw_z, y_min * raw_z, raw_z],
+            [x_max * raw_z, y_max * raw_z, raw_z],
+            [x_min * raw_z, y_max * raw_z, raw_z],
+        ],
+        dtype=torch.float32,
+    )
+    vertices = (raw_vertices * axis - center_vec).numpy().astype(np.float32)
     uvs = np.asarray([[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]], dtype=np.float32)
     if not flip_y:
         uvs[:, 1] = 1.0 - uvs[:, 1]
