@@ -77,7 +77,7 @@ Inputs:
 Options:
 
 - `invert`: inverts the merged mask
-- `parts`: dynamic part rows in the UI. Click `+ add part`, pick a class, and enable/disable rows. If no rows are added, all foreground body parts are merged.
+- `parts`: dynamic part rows in the UI. Click `+ add part`, enable the row, pick a part group, then choose a detail option. Left/right classes are grouped into names such as `Hand`, `Arm`, `Upper Arm`, `Leg`, and `Shoe`. Upper/lower classes are grouped into `Clothing`, `Lip`, and `Teeth`. Detail is `all` for single classes, `all/left/right` for side-aware groups, and `all/upper/lower` for upper/lower groups. If no rows are added, all foreground body parts are merged.
 
 Outputs:
 

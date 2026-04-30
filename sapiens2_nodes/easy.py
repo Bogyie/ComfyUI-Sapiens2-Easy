@@ -15,6 +15,28 @@ from .types import Sapiens2PoseModel
 
 
 TASKS = ("segmentation", "normal", "pointmap", "pose")
+SEG_GROUPS = {
+    "Background": {"all": (0,)},
+    "Apparel": {"all": (1,)},
+    "Eyeglass": {"all": (2,)},
+    "Face Neck": {"all": (3,)},
+    "Hair": {"all": (4,)},
+    "Foot": {"all": (5, 14), "left": (5,), "right": (14,)},
+    "Hand": {"all": (6, 15), "left": (6,), "right": (15,)},
+    "Arm": {"all": (7, 11, 16, 20), "left": (7, 11), "right": (16, 20)},
+    "Lower Arm": {"all": (7, 16), "left": (7,), "right": (16,)},
+    "Upper Arm": {"all": (11, 20), "left": (11,), "right": (20,)},
+    "Leg": {"all": (8, 12, 17, 21), "left": (8, 12), "right": (17, 21)},
+    "Lower Leg": {"all": (8, 17), "left": (8,), "right": (17,)},
+    "Upper Leg": {"all": (12, 21), "left": (12,), "right": (21,)},
+    "Shoe": {"all": (9, 18), "left": (9,), "right": (18,)},
+    "Sock": {"all": (10, 19), "left": (10,), "right": (19,)},
+    "Clothing": {"all": (13, 23), "upper": (23,), "lower": (13,)},
+    "Torso": {"all": (22,)},
+    "Lip": {"all": (24, 25), "upper": (25,), "lower": (24,)},
+    "Teeth": {"all": (26, 27), "upper": (27,), "lower": (26,)},
+    "Tongue": {"all": (28,)},
+}
 
 
 def _default_checkpoint_path(task: str, model_size: str) -> str:
@@ -84,6 +106,16 @@ def _part_id(value: Any) -> int | None:
     return None
 
 
+def _group_ids(name: Any, detail: Any = "all") -> tuple[int, ...]:
+    name_text = str(name).strip()
+    detail_text = str(detail or "all").strip().lower()
+    if name_text in SEG_GROUPS:
+        options = SEG_GROUPS[name_text]
+        return options.get(detail_text, options["all"])
+    part_index = _part_id(name_text)
+    return (part_index,) if part_index is not None else ()
+
+
 def _selected_parts(parts: str) -> list[int] | None:
     text = (parts or "").strip()
     if not text:
@@ -92,18 +124,17 @@ def _selected_parts(parts: str) -> list[int] | None:
         rows = json.loads(text)
     except json.JSONDecodeError:
         rows = [{"part": item.strip(), "enabled": True} for item in text.replace("\n", ",").split(",")]
-    selected = []
+    selected = set()
     for row in rows if isinstance(rows, list) else []:
         if isinstance(row, dict):
             if not bool(row.get("enabled", True)):
                 continue
-            part = row.get("part", "")
+            ids = _group_ids(row.get("name", row.get("part", "")), row.get("detail", "all"))
         else:
-            part = row
-        part_index = _part_id(part)
-        if part_index is not None and part_index not in selected:
-            selected.append(part_index)
-    return selected
+            ids = _group_ids(row)
+        for part_index in ids:
+            selected.add(part_index)
+    return sorted(selected)
 
 
 def _part_masks(class_ids: torch.Tensor, part_ids: list[int]) -> torch.Tensor:
@@ -301,7 +332,7 @@ class Sapiens2Segmentation:
             _comfy_image(preview),
             _merge_parts(class_ids, part_ids, invert),
             _part_masks(class_ids, part_ids),
-            {"class_ids": class_ids, "parts": SEG_PARTS},
+            {"class_ids": class_ids, "parts": SEG_PARTS, "groups": SEG_GROUPS},
         )
 
 
