@@ -50,13 +50,15 @@ Use `python install.py --skip-deps` only when you intentionally want to skip pip
 
 When using an automatic custom-node manager, check whether it runs `pip install -r requirements.txt` before `install.py`. If it does, verify the resolved packages before applying the install, or install manually with `python install.py` so the current PyTorch stack can be pinned.
 
+RTMDet pose detection is optional and uses `mmdet`/`mmengine`/`mmcv` when you provide `rtmdet_m.pth`. Those packages are not installed automatically because they can affect the PyTorch/CUDA stack. Without RTMDet, the easy pose path uses the Hugging Face detector fallback.
+
 ## Model Loading
 
 Use one node for every task:
 
 - `Sapiens2 Model`
 
-Pick `task` and `model_size`. The node first checks the local cache under `ComfyUI/models/sapiens2/<task>/`; if the file is missing, it downloads the matching Hugging Face checkpoint. The `load_info` output tells you exactly where the checkpoint and, for pose, detector were loaded from.
+Pick `task` and `model_size`. The node first checks the local cache under `ComfyUI/models/sapiens2/<task>/`; if the file is missing, it downloads the matching Hugging Face checkpoint. Dense tasks are loaded through the official Sapiens2 config files and `init_model()` path. The `load_info` output tells you exactly where the checkpoint, config, and, for pose, detector were loaded from.
 
 Use `Sapiens2 Model Advanced` if you need `source = local_only`, `source = download`, custom `repo_id`, `filename`, `checkpoint_path`, `revision`, `token`, `device`, `dtype`, or pose detector paths.
 
@@ -122,10 +124,10 @@ segmentation -> facebook/sapiens2-seg-{0.4b,0.8b,1b,5b}
 normal       -> facebook/sapiens2-normal-{0.4b,0.8b,1b,5b}
 pointmap     -> facebook/sapiens2-pointmap-{0.4b,0.8b,1b,5b}
 pose         -> facebook/sapiens2-pose-{0.4b,0.8b,1b,5b}
-pose detector -> facebook/detr-resnet-101-dc5
+pose detector -> local rtmdet_m.pth when present, otherwise facebook/detr-resnet-101-dc5
 ```
 
-Downloaded files are saved under `ComfyUI/models/sapiens2/<task>/` by default. Pose detector files are saved under `ComfyUI/models/sapiens2/detector/`.
+Downloaded files are saved under `ComfyUI/models/sapiens2/<task>/` by default. Pose detector files are saved under `ComfyUI/models/sapiens2/detector/`. If `ComfyUI/models/sapiens2/detector/rtmdet_m.pth` exists, pose detection follows the reference RTMDet/MMDetection path. If it is missing, the easy node downloads and uses the lighter Hugging Face DETR detector path so first use still works.
 
 ## Design Notes
 

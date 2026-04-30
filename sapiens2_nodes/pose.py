@@ -10,6 +10,7 @@ from .constants import (
     ARCH_SPECS,
     POSE_CONFIG_DATASET,
     POSE_CONFIG_RESOLUTION,
+    POSE_RTMDET_CONFIG_REL,
     POSE_KEYPOINT_COUNT,
 )
 from .model_loading import (
@@ -25,7 +26,7 @@ from .types import Sapiens2PoseModel
 
 POSE_GROUPS = ("body", "face", "left_hand", "right_hand", "feet", "extra")
 POSE_MODEL_CACHE: dict[tuple[str, str, str, str, str, str, int, int], Sapiens2PoseModel] = {}
-DETECTOR_CACHE: dict[tuple[str, str], tuple[Any, Any]] = {}
+DETECTOR_CACHE: dict[tuple[str, str], tuple[Any, Any, Any]] = {}
 
 
 def _pose_result(model, image, radius: int = 4, threshold: float = 0.3):
@@ -61,6 +62,16 @@ def _config_path(sapiens_repo_path: str, arch: str) -> str:
     if not path.is_file():
         raise FileNotFoundError(f"Sapiens2 pose config not found: {path}")
     return str(path)
+
+
+def _detector_config_path(sapiens_repo_path: str) -> str:
+    path = get_sapiens_repo_path(sapiens_repo_path) / POSE_RTMDET_CONFIG_REL
+    if path.is_file():
+        return str(path)
+    fallback = Path(__file__).resolve().parent / "configs" / "rtmdet_m_640-8xb32_coco-person.py"
+    if not fallback.is_file():
+        raise FileNotFoundError(f"Sapiens2 RTMDet config not found: {path}")
+    return str(fallback)
 
 
 def _detect_pose_arch(checkpoint_path: str) -> str:
@@ -129,6 +140,8 @@ def load_sapiens2_pose_model(
     resolved_dtype = _resolve_dtype(dtype, resolved_device)
     arch = _detect_pose_arch(checkpoint_path) if model_size == "auto" else f"sapiens2_{model_size}"
     config_path = _config_path(sapiens_repo_path, arch)
+    repo_path = str(get_sapiens_repo_path(sapiens_repo_path))
+    detector_config_path = _detector_config_path(sapiens_repo_path) if os.path.isfile(detector_path) else ""
     model = init_model(config_path, checkpoint_path, device=str(resolved_device))
     codec, metainfo = _setup_pose_model(model, sapiens_repo_path)
     if int(getattr(model.cfg, "num_keypoints", 0)) != POSE_KEYPOINT_COUNT:
@@ -152,9 +165,42 @@ def load_sapiens2_pose_model(
         dtype=resolved_dtype,
         codec=codec,
         metainfo=metainfo,
+        repo_path=repo_path,
+        detector_config_path=detector_config_path,
     )
     POSE_MODEL_CACHE[cache_key] = loaded
     return loaded
+
+
+def _mmdet_install_message(original_error: Exception) -> str:
+    return (
+        "RTMDet pose detection requires MMDetection dependencies "
+        "(`mmdet`, `mmengine`, and `mmcv` or `mmcv-lite`). "
+        "Install versions compatible with your ComfyUI torch/CUDA stack, then retry. "
+        f"Original import error: {original_error}"
+    )
+
+
+def _import_mmdet_apis():
+    try:
+        import sys
+
+        sys.modules["mmpretrain"] = None
+        mmdet_apis = __import__("mmdet.apis", fromlist=["init_detector", "inference_detector"])
+        mmdet_datasets = __import__("mmdet.datasets", fromlist=["transforms"])
+    except Exception as exc:
+        raise RuntimeError(_mmdet_install_message(exc)) from exc
+    return mmdet_apis.init_detector, mmdet_apis.inference_detector, mmdet_datasets.transforms
+
+
+def _patch_mmdet_pipeline(cfg: Any, transforms_module: Any):
+    if "test_dataloader" not in cfg:
+        return cfg
+    available = dir(transforms_module)
+    for trans in cfg.test_dataloader.dataset.pipeline:
+        if isinstance(trans, dict) and trans.get("type") in available:
+            trans["type"] = "mmdet." + trans["type"]
+    return cfg
 
 
 def _get_detector(pose_model: Sapiens2PoseModel):
@@ -162,6 +208,18 @@ def _get_detector(pose_model: Sapiens2PoseModel):
     cached = DETECTOR_CACHE.get(cache_key)
     if cached is not None:
         return cached
+
+    if os.path.isfile(pose_model.detector_path):
+        init_detector, inference_detector, transforms_module = _import_mmdet_apis()
+        config_path = pose_model.detector_config_path
+        if not config_path:
+            config_path = str(Path(pose_model.repo_path) / POSE_RTMDET_CONFIG_REL)
+        detector = init_detector(config_path, pose_model.detector_path, device=str(pose_model.device))
+        detector.cfg = _patch_mmdet_pipeline(detector.cfg, transforms_module)
+        cached = ("rtmdet", detector, inference_detector)
+        DETECTOR_CACHE[cache_key] = cached
+        return cached
+
     try:
         from transformers import DetrForObjectDetection, DetrImageProcessor
     except Exception as exc:
@@ -172,8 +230,9 @@ def _get_detector(pose_model: Sapiens2PoseModel):
 
     processor = DetrImageProcessor.from_pretrained(pose_model.detector_path)
     detector = DetrForObjectDetection.from_pretrained(pose_model.detector_path).eval().to(pose_model.device)
-    DETECTOR_CACHE[cache_key] = (processor, detector)
-    return processor, detector
+    cached = ("detr", processor, detector)
+    DETECTOR_CACHE[cache_key] = cached
+    return cached
 
 
 def _nms_boxes(boxes: np.ndarray, threshold: float) -> np.ndarray:
@@ -185,9 +244,23 @@ def _nms_boxes(boxes: np.ndarray, threshold: float) -> np.ndarray:
 
 
 def _detect_persons(image_rgb: np.ndarray, pose_model: Sapiens2PoseModel, bbox_threshold: float, nms_threshold: float):
+    detector_kind, first, second = _get_detector(pose_model)
+    if detector_kind == "rtmdet":
+        detector = first
+        inference_detector = second
+        det_result = inference_detector(detector, image_rgb[..., ::-1].copy())
+        pred = det_result.pred_instances.cpu().numpy()
+        keep = np.logical_and(pred.labels == 0, pred.scores > bbox_threshold)
+        if not keep.any():
+            return np.empty((0, 4), dtype=np.float32), np.empty((0,), dtype=np.float32)
+        bboxes = np.concatenate((pred.bboxes, pred.scores[:, None]), axis=1)[keep]
+        detected = _nms_boxes(bboxes, nms_threshold)
+        return detected[:, :4].astype(np.float32), detected[:, 4].astype(np.float32)
+
     from PIL import Image
 
-    processor, detector = _get_detector(pose_model)
+    processor = first
+    detector = second
     inputs = processor(images=Image.fromarray(image_rgb), return_tensors="pt").to(pose_model.device)
     with torch.no_grad():
         outputs = detector(**inputs)

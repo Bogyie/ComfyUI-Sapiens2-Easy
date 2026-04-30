@@ -2,15 +2,34 @@ import importlib
 import os
 import sys
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Dict, List
 
 import torch
 
-from .constants import ARCH_SPECS, PATCH_SIZE, SEG_CLASS_COUNT, TARGET_SIZE
+from .constants import ARCH_SPECS
 from .types import Sapiens2Model
 
 
 _MODEL_CACHE: dict[tuple[str, str, str, str, str, str, int, int], Sapiens2Model] = {}
+
+_DENSE_CONFIG_TEMPLATES = {
+    "segmentation": (
+        "sapiens/dense/configs/seg/shutterstock_goliath/"
+        "{arch}_seg_shutterstock_goliath-1024x768.py"
+    ),
+    "normal": (
+        "sapiens/dense/configs/normal/metasim_render_people/"
+        "{arch}_normal_metasim_render_people-1024x768.py"
+    ),
+    "pointmap": (
+        "sapiens/dense/configs/pointmap/render_people/"
+        "{arch}_pointmap_render_people-1024x768.py"
+    ),
+    "albedo": (
+        "sapiens/dense/configs/albedo/render_people/"
+        "{arch}_albedo_render_people-1024x768.py"
+    ),
+}
 
 
 def _candidate_repo_paths(repo_path: str) -> List[Path]:
@@ -74,9 +93,8 @@ def _resolve_device(device: str) -> torch.device:
         return torch.device("cpu")
     if device == "cuda" and not torch.cuda.is_available():
         raise RuntimeError("CUDA was requested but is not available.")
-    if device == "mps":
-        if not (hasattr(torch.backends, "mps") and torch.backends.mps.is_available()):
-            raise RuntimeError("MPS was requested but is not available.")
+    if device == "mps" and not (hasattr(torch.backends, "mps") and torch.backends.mps.is_available()):
+        raise RuntimeError("MPS was requested but is not available.")
     return torch.device(device)
 
 
@@ -98,8 +116,8 @@ def _normalize_state_dict(state_dict: Dict[str, torch.Tensor]) -> Dict[str, torc
     while state_dict and changed:
         changed = False
         for prefix in prefixes:
-            if all(k.startswith(prefix) for k in state_dict.keys()):
-                state_dict = {k[len(prefix) :]: v for k, v in state_dict.items()}
+            if all(key.startswith(prefix) for key in state_dict):
+                state_dict = {key[len(prefix) :]: value for key, value in state_dict.items()}
                 changed = True
                 break
     return state_dict
@@ -145,9 +163,7 @@ def _detect_task(state_dict: Dict[str, torch.Tensor]) -> str:
             return task
     if "decode_head.conv_pose.weight" in state_dict:
         raise ValueError(
-            "This checkpoint is a Sapiens2 pose model, but the dense model loader was used. "
-            "Load it through Sapiens2 Model with task=pose so the pose detector/top-down "
-            "pipeline is initialized."
+            "This checkpoint is a Sapiens2 pose model. Load it with task=pose."
         )
     raise ValueError("Could not infer dense task from checkpoint decode_head keys.")
 
@@ -172,198 +188,14 @@ def _resolve_task_arch(
     return task, arch
 
 
-def _extract_upsample_channels(state_dict: Dict[str, torch.Tensor]) -> List[int]:
-    channels = []
-    index = 0
-    while f"decode_head.upsample_blocks.{index}.0.weight" in state_dict:
-        channels.append(state_dict[f"decode_head.upsample_blocks.{index}.0.weight"].shape[0] // 4)
-        index += 1
-    return channels
-
-
-def _extract_conv_layers(state_dict: Dict[str, torch.Tensor], prefix: str) -> tuple[List[int], List[int]]:
-    channels = []
-    kernels = []
-    index = 0
-    while f"{prefix}.{index}.weight" in state_dict:
-        weight = state_dict[f"{prefix}.{index}.weight"]
-        channels.append(weight.shape[0])
-        kernels.append(weight.shape[2])
-        index += 3
-    return channels, kernels
-
-
-def _extract_deconv_layers(state_dict: Dict[str, torch.Tensor]) -> tuple[List[int], List[int]]:
-    channels = []
-    kernels = []
-    index = 0
-    while f"decode_head.deconv_layers.{index}.weight" in state_dict:
-        weight = state_dict[f"decode_head.deconv_layers.{index}.weight"]
-        channels.append(weight.shape[1])
-        kernels.append(weight.shape[2])
-        index += 3
-    return channels, kernels
-
-
-def _extract_scale_final_layer(state_dict: Dict[str, torch.Tensor]) -> tuple[int, ...]:
-    first_key = "decode_head.scale_final_layer.1.weight"
-    if first_key not in state_dict:
-        return ()
-    layers = [state_dict[first_key].shape[1]]
-    index = 1
-    while f"decode_head.scale_final_layer.{index}.weight" in state_dict:
-        layers.append(state_dict[f"decode_head.scale_final_layer.{index}.weight"].shape[0])
-        index += 2
-    return tuple(layers)
-
-
-def _build_model_config(
-    task: str,
-    arch: str,
-    state_dict: Dict[str, torch.Tensor] | None = None,
-) -> Dict[str, Any]:
-    embed_dim = ARCH_SPECS[arch]["embed_dim"]
-    backbone = {
-        "type": "Sapiens2",
-        "arch": arch,
-        "img_size": TARGET_SIZE,
-        "patch_size": PATCH_SIZE,
-        "final_norm": True,
-        "use_tokenizer": False,
-        "with_cls_token": True,
-        "out_type": "featmap",
-    }
-
-    if task == "segmentation":
-        deconv_channels = (512, 256, 128, 64)
-        deconv_kernels = (4, 4, 4, 4)
-        conv_channels = (64, 64)
-        conv_kernels = (1, 1)
-        num_classes = SEG_CLASS_COUNT
-        if state_dict is not None:
-            detected_deconv_channels, detected_deconv_kernels = _extract_deconv_layers(state_dict)
-            detected_conv_channels, detected_conv_kernels = _extract_conv_layers(
-                state_dict, "decode_head.conv_layers"
-            )
-            deconv_channels = tuple(detected_deconv_channels or deconv_channels)
-            deconv_kernels = tuple(detected_deconv_kernels or deconv_kernels)
-            conv_channels = tuple(detected_conv_channels or conv_channels)
-            conv_kernels = tuple(detected_conv_kernels or conv_kernels)
-            if "decode_head.conv_seg.weight" in state_dict:
-                num_classes = state_dict["decode_head.conv_seg.weight"].shape[0]
-        return {
-            "type": "SegEstimator",
-            "backbone": backbone,
-            "decode_head": {
-                "type": "SegHead",
-                "in_channels": embed_dim,
-                "deconv_out_channels": deconv_channels,
-                "deconv_kernel_sizes": deconv_kernels,
-                "conv_out_channels": conv_channels,
-                "conv_kernel_sizes": conv_kernels,
-                "num_classes": num_classes,
-            },
-        }
-
-    is_5b = arch == "sapiens2_5b"
-    if task == "normal":
-        upsample_channels = [1536, 768, 512, 256] if is_5b else [768, 512, 256, 128]
-        conv_out_channels = [128, 64, 32] if is_5b else [64, 32, 16]
-        conv_kernel_sizes = [3, 3, 3]
-        if state_dict is not None:
-            upsample_channels = _extract_upsample_channels(state_dict) or upsample_channels
-            detected_conv_channels, detected_conv_kernels = _extract_conv_layers(
-                state_dict, "decode_head.conv_layers"
-            )
-            conv_out_channels = detected_conv_channels or conv_out_channels
-            conv_kernel_sizes = detected_conv_kernels or conv_kernel_sizes
-        return {
-            "type": "NormalEstimator",
-            "backbone": backbone,
-            "decode_head": {
-                "type": "NormalHead",
-                "in_channels": embed_dim,
-                "upsample_channels": upsample_channels,
-                "conv_out_channels": conv_out_channels,
-                "conv_kernel_sizes": conv_kernel_sizes,
-            },
-        }
-
-    if task == "pointmap":
-        num_tokens = (TARGET_SIZE[0] // PATCH_SIZE) * (TARGET_SIZE[1] // PATCH_SIZE)
-        upsample_channels = [1536, 768, 768, 768] if is_5b else [1536, 768, 512, 256]
-        conv_out_channels = [128, 64, 32] if is_5b else [64, 32, 16]
-        conv_kernel_sizes = [3, 3, 3]
-        scale_conv_out_channels = (1536, 512, 128)
-        scale_conv_kernel_sizes = (1, 1, 1)
-        scale_final_layer = ((num_tokens // 64) * 128, 512, 128, 1)
-        if state_dict is not None:
-            upsample_channels = _extract_upsample_channels(state_dict) or upsample_channels
-            detected_conv_channels, detected_conv_kernels = _extract_conv_layers(
-                state_dict, "decode_head.conv_layers"
-            )
-            conv_out_channels = detected_conv_channels or conv_out_channels
-            conv_kernel_sizes = detected_conv_kernels or conv_kernel_sizes
-            detected_scale_channels, detected_scale_kernels = _extract_conv_layers(
-                state_dict, "decode_head.scale_conv_layers"
-            )
-            scale_conv_out_channels = tuple(detected_scale_channels or scale_conv_out_channels)
-            scale_conv_kernel_sizes = tuple(detected_scale_kernels or scale_conv_kernel_sizes)
-            scale_final_layer = _extract_scale_final_layer(state_dict) or scale_final_layer
-        return {
-            "type": "PointmapEstimator",
-            "canonical_focal_length": 768.0,
-            "backbone": backbone,
-            "decode_head": {
-                "type": "PointmapHead",
-                "in_channels": embed_dim,
-                "upsample_channels": upsample_channels,
-                "conv_out_channels": conv_out_channels,
-                "conv_kernel_sizes": conv_kernel_sizes,
-                "scale_conv_out_channels": scale_conv_out_channels,
-                "scale_conv_kernel_sizes": scale_conv_kernel_sizes,
-                "scale_final_layer": scale_final_layer,
-            },
-        }
-
-    if task == "albedo":
-        upsample_channels = [1536, 768, 512, 256] if is_5b else [768, 512, 256, 128]
-        conv_out_channels = [64, 32, 16]
-        conv_kernel_sizes = [3, 3, 3]
-        if state_dict is not None:
-            upsample_channels = _extract_upsample_channels(state_dict) or upsample_channels
-            detected_conv_channels, detected_conv_kernels = _extract_conv_layers(
-                state_dict, "decode_head.conv_layers"
-            )
-            conv_out_channels = detected_conv_channels or conv_out_channels
-            conv_kernel_sizes = detected_conv_kernels or conv_kernel_sizes
-        return {
-            "type": "AlbedoEstimator",
-            "backbone": backbone,
-            "decode_head": {
-                "type": "AlbedoHead",
-                "in_channels": embed_dim,
-                "upsample_channels": upsample_channels,
-                "conv_out_channels": conv_out_channels,
-                "conv_kernel_sizes": conv_kernel_sizes,
-            },
-        }
-
-    raise ValueError(f"Unsupported task: {task}")
-
-
-def _load_state_dict(
-    model: torch.nn.Module,
-    state_dict: Dict[str, torch.Tensor],
-    device: torch.device,
-):
-    incompatible = model.load_state_dict(state_dict, strict=False)
-    if incompatible.missing_keys:
-        print(f"[Sapiens2-ComfyUI] Missing keys: {len(incompatible.missing_keys)}")
-    if incompatible.unexpected_keys:
-        print(f"[Sapiens2-ComfyUI] Unexpected keys: {len(incompatible.unexpected_keys)}")
-    model.to(device)
-    model.eval()
+def _dense_config_path(repo_path: str, task: str, arch: str) -> Path:
+    template = _DENSE_CONFIG_TEMPLATES.get(task)
+    if template is None:
+        raise ValueError(f"Unsupported dense Sapiens2 task: {task}")
+    config_path = get_sapiens_repo_path(repo_path) / template.format(arch=arch)
+    if not config_path.is_file():
+        raise FileNotFoundError(f"Expected official Sapiens2 config at: {config_path}")
+    return config_path
 
 
 def load_sapiens2_model(
@@ -393,17 +225,17 @@ def load_sapiens2_model(
         return cached
 
     _ensure_sapiens_importable(sapiens_repo_path)
-    from sapiens.registry import MODELS
-
-    resolved_device = _resolve_device(device)
-    resolved_dtype = _resolve_dtype(dtype, resolved_device)
     state_dict = _read_checkpoint_state_dict(checkpoint_path)
     task, arch = _resolve_task_arch(task, arch, state_dict)
+    config_path = _dense_config_path(sapiens_repo_path, task, arch)
+    resolved_device = _resolve_device(device)
+    resolved_dtype = _resolve_dtype(dtype, resolved_device)
 
-    model = MODELS.build(_build_model_config(task, arch, state_dict=state_dict))
-    _load_state_dict(model, state_dict, resolved_device)
+    init_model = importlib.import_module("sapiens.dense.src.models.init_model").init_model
+    model = init_model(str(config_path), checkpoint_path, device=str(resolved_device))
     if resolved_dtype != torch.float32:
         model.to(dtype=resolved_dtype)
+    model.eval()
 
     loaded = Sapiens2Model(
         model=model,
@@ -412,6 +244,7 @@ def load_sapiens2_model(
         checkpoint_path=checkpoint_path,
         device=resolved_device,
         dtype=resolved_dtype,
+        config_path=str(config_path),
     )
     _MODEL_CACHE[cache_key] = loaded
     return loaded
