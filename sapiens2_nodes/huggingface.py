@@ -93,6 +93,21 @@ def _resolve_hf_args(task: str, model_size: str, repo_id: str, filename: str, lo
     return resolved_repo, resolved_filename, resolved_local_dir
 
 
+def _download_with_hf_client_retry(download_fn, **kwargs):
+    try:
+        return download_fn(**kwargs)
+    except RuntimeError as exc:
+        if "client has been closed" not in str(exc):
+            raise
+        try:
+            from huggingface_hub.utils import _http
+
+            _http.close_session()
+        except Exception:
+            pass
+        return download_fn(**kwargs)
+
+
 def download_sapiens2_from_hf(
     task: str,
     model_size: str,
@@ -115,7 +130,8 @@ def download_sapiens2_from_hf(
     resolved_repo, resolved_filename, resolved_local_dir = _resolve_hf_args(
         task, model_size, repo_id, filename, local_dir
     )
-    path = hf_hub_download(
+    path = _download_with_hf_client_retry(
+        hf_hub_download,
         repo_id=resolved_repo,
         filename=resolved_filename,
         revision=revision.strip() or "main",
@@ -150,7 +166,8 @@ def download_sapiens2_pose_detector_from_hf(
     else:
         resolved_local_dir = str(get_model_root() / "detector" / resolved_repo.rsplit("/", 1)[-1])
     Path(resolved_local_dir).mkdir(parents=True, exist_ok=True)
-    path = snapshot_download(
+    path = _download_with_hf_client_retry(
+        snapshot_download,
         repo_id=resolved_repo,
         revision=revision.strip() or "main",
         local_dir=resolved_local_dir,
