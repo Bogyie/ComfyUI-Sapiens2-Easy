@@ -3,6 +3,7 @@ import struct
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import torch
 
 from .constants import DEVICES, MODEL_SIZE_CHOICES, POSE_DETECTOR_REPO, POSE_RTMDET_FILENAME, SEG_CLASS_COUNT, SEG_PARTS
@@ -283,7 +284,345 @@ def _write_pointmap_glb(pointmap: torch.Tensor, image: torch.Tensor, max_points:
     return str(path)
 
 
-def _openpose_json(raw: dict[str, Any]) -> str:
+POSE_TARGETS = ("BODY_25", "308-keypoint", "COCO_18", "OpenPose hand 21 + 21", "OpenPose face 70")
+_COCO18 = (0, 69, 6, 8, 41, 5, 7, 62, 10, 12, 14, 9, 11, 13, 2, 1, 4, 3)
+_BODY25 = (0, 69, 6, 8, 41, 5, 7, 62, (9, 10), 10, 12, 14, 9, 11, 13, 2, 1, 4, 3, 15, 16, 17, 18, 19, 20)
+_RIGHT_HAND21 = (41, 24, 23, 22, 21, 28, 27, 26, 25, 32, 31, 30, 29, 36, 35, 34, 33, 40, 39, 38, 37)
+_LEFT_HAND21 = (62, 45, 44, 43, 42, 49, 48, 47, 46, 53, 52, 51, 50, 57, 56, 55, 54, 61, 60, 59, 58)
+_BODY25_EDGES = (
+    (1, 8),
+    (1, 2),
+    (1, 5),
+    (2, 3),
+    (3, 4),
+    (5, 6),
+    (6, 7),
+    (8, 9),
+    (9, 10),
+    (10, 11),
+    (8, 12),
+    (12, 13),
+    (13, 14),
+    (0, 1),
+    (0, 15),
+    (15, 17),
+    (0, 16),
+    (16, 18),
+    (14, 19),
+    (19, 20),
+    (14, 21),
+    (11, 22),
+    (22, 23),
+    (11, 24),
+)
+_COCO18_EDGES = (
+    (1, 2),
+    (1, 5),
+    (2, 3),
+    (3, 4),
+    (5, 6),
+    (6, 7),
+    (1, 8),
+    (8, 9),
+    (9, 10),
+    (1, 11),
+    (11, 12),
+    (12, 13),
+    (1, 0),
+    (0, 14),
+    (14, 16),
+    (0, 15),
+    (15, 17),
+)
+_HAND21_EDGES = (
+    (0, 1),
+    (1, 2),
+    (2, 3),
+    (3, 4),
+    (0, 5),
+    (5, 6),
+    (6, 7),
+    (7, 8),
+    (0, 9),
+    (9, 10),
+    (10, 11),
+    (11, 12),
+    (0, 13),
+    (13, 14),
+    (14, 15),
+    (15, 16),
+    (0, 17),
+    (17, 18),
+    (18, 19),
+    (19, 20),
+)
+_FACE70_EDGES = tuple(zip(range(17, 21), range(18, 22))) + tuple(zip(range(22, 26), range(23, 27))) + (
+    (27, 28),
+    (28, 29),
+    (29, 30),
+    (31, 32),
+    (32, 33),
+    (33, 34),
+    (34, 35),
+) + tuple(zip((36, 37, 38, 39, 40, 41), (37, 38, 39, 40, 41, 36))) + tuple(
+    zip((42, 43, 44, 45, 46, 47), (43, 44, 45, 46, 47, 42))
+) + tuple(zip(range(48, 59), range(49, 60))) + ((59, 48),) + tuple(zip(range(60, 67), range(61, 68))) + ((67, 60),)
+_GOLIATH_FACE = dict(
+    r_brow_up=[78, 80, 81, 83, 84],
+    l_brow_up=[87, 89, 90, 92, 93],
+    nose_bridge=[70, 71, 73, 74, 75, 178],
+    nose_base=[180, 184, 179, 187, 181],
+    r_eye_outer=121,
+    r_eye_inner=120,
+    r_eye_upper=[122, 123, 124, 125, 126, 127, 128],
+    r_eye_lower=[163, 164, 165, 166, 167, 168, 169],
+    l_eye_inner=96,
+    l_eye_outer=97,
+    l_eye_upper=[98, 99, 100, 101, 102, 103, 104],
+    l_eye_lower=[146, 147, 148, 149, 150, 151, 152],
+    lip_o_r_corner=188,
+    lip_o_l_corner=189,
+    cupid=190,
+    lower_o_center=191,
+    lip_o_upper=[192, 193, 196, 197, 198, 199],
+    lip_o_lower=[194, 195, 200, 201, 202, 203],
+    lip_i_r_corner=204,
+    lip_i_l_corner=205,
+    upper_i_center=206,
+    lower_i_center=207,
+    lip_i_upper=[208, 209, 212, 213, 214, 215],
+    lip_i_lower=[210, 211, 216, 217, 218, 219],
+    r_pupil=2,
+    l_pupil=1,
+)
+
+
+def _pose_target_key(target: str) -> str:
+    text = str(target or "").lower()
+    if "308" in text:
+        return "sapiens_308"
+    if "coco" in text:
+        return "coco_18"
+    if "hand" in text:
+        return "hand_21"
+    if "face" in text:
+        return "face_70"
+    return "body_25"
+
+
+def _triples(keypoints: Any, scores: Any) -> np.ndarray:
+    points = np.asarray(keypoints, dtype=np.float32).reshape(-1, 2)
+    conf = np.asarray(scores, dtype=np.float32).reshape(-1)
+    count = min(points.shape[0], conf.shape[0])
+    return np.concatenate([points[:count], conf[:count, None]], axis=1)
+
+
+def _pick(triples: np.ndarray, spec: Any) -> np.ndarray:
+    if isinstance(spec, tuple):
+        picked = [_pick(triples, item) for item in spec]
+        valid = [item for item in picked if item[2] > 0]
+        if not valid:
+            return np.zeros(3, dtype=np.float32)
+        valid_arr = np.stack(valid)
+        return np.array([valid_arr[:, 0].mean(), valid_arr[:, 1].mean(), valid_arr[:, 2].min()], dtype=np.float32)
+    if spec is None or int(spec) < 0 or int(spec) >= triples.shape[0]:
+        return np.zeros(3, dtype=np.float32)
+    return triples[int(spec)].astype(np.float32)
+
+
+def _subset(triples: np.ndarray, indices: tuple[Any, ...]) -> np.ndarray:
+    return np.stack([_pick(triples, item) for item in indices]).astype(np.float32)
+
+
+def _face70(triples: np.ndarray) -> np.ndarray:
+    face: list[np.ndarray] = []
+    mapping = _GOLIATH_FACE
+
+    def push(indices: Any) -> None:
+        for index in np.asarray(indices, dtype=np.int64).reshape(-1):
+            face.append(_pick(triples, int(index)))
+
+    def push_zeros(count: int) -> None:
+        for _ in range(count):
+            face.append(np.zeros(3, dtype=np.float32))
+
+    def sort_x(indices: Any) -> np.ndarray:
+        values = np.asarray(indices, dtype=np.int64).reshape(-1)
+        values = values[(values >= 0) & (values < triples.shape[0])]
+        return values[np.argsort(triples[values, 0])] if len(values) else values
+
+    push_zeros(17)
+    push(sort_x(mapping["r_brow_up"]))
+    push(sort_x(mapping["l_brow_up"]))
+    nose_bridge = sort_x(mapping["nose_bridge"])
+    nose_bridge = nose_bridge[np.argsort(triples[nose_bridge, 1])] if len(nose_bridge) else nose_bridge
+    push([nose_bridge[0], nose_bridge[len(nose_bridge) // 3], nose_bridge[2 * len(nose_bridge) // 3], nose_bridge[-1]])
+    push(mapping["nose_base"])
+
+    right_upper = sort_x(mapping["r_eye_upper"])
+    right_lower = sort_x(mapping["r_eye_lower"])
+    push(
+        [
+            mapping["r_eye_outer"],
+            right_upper[len(right_upper) // 3],
+            right_upper[2 * len(right_upper) // 3],
+            mapping["r_eye_inner"],
+            right_lower[2 * len(right_lower) // 3],
+            right_lower[len(right_lower) // 3],
+        ]
+    )
+    left_upper = sort_x(mapping["l_eye_upper"])
+    left_lower = sort_x(mapping["l_eye_lower"])
+    push(
+        [
+            mapping["l_eye_inner"],
+            left_upper[len(left_upper) // 3],
+            left_upper[2 * len(left_upper) // 3],
+            mapping["l_eye_outer"],
+            left_lower[2 * len(left_lower) // 3],
+            left_lower[len(left_lower) // 3],
+        ]
+    )
+
+    cupid_x = float(_pick(triples, mapping["cupid"])[0])
+    upper_lip = sort_x(mapping["lip_o_upper"])
+    left = upper_lip[triples[upper_lip, 0] < cupid_x]
+    right = upper_lip[triples[upper_lip, 0] > cupid_x]
+    push([mapping["lip_o_r_corner"]])
+    push([int(left[0]), int(left[-1])] if len(left) >= 2 else list(left) + [mapping["lip_o_r_corner"]] * (2 - len(left)))
+    push([mapping["cupid"]])
+    push([int(right[0]), int(right[-1])] if len(right) >= 2 else list(right) + [mapping["lip_o_l_corner"]] * (2 - len(right)))
+    push([mapping["lip_o_l_corner"]])
+
+    lower_center_x = float(_pick(triples, mapping["lower_o_center"])[0])
+    lower_lip = sort_x(mapping["lip_o_lower"])
+    left_lower_lip = lower_lip[triples[lower_lip, 0] < lower_center_x]
+    right_lower_lip = lower_lip[triples[lower_lip, 0] > lower_center_x]
+    push(
+        [int(right_lower_lip[-1]), int(right_lower_lip[0])]
+        if len(right_lower_lip) >= 2
+        else list(right_lower_lip) + [mapping["lower_o_center"]] * (2 - len(right_lower_lip))
+    )
+    push([mapping["lower_o_center"]])
+    push(
+        [int(left_lower_lip[-1]), int(left_lower_lip[0])]
+        if len(left_lower_lip) >= 2
+        else list(left_lower_lip) + [mapping["lower_o_center"]] * (2 - len(left_lower_lip))
+    )
+
+    upper_inner_x = float(_pick(triples, mapping["upper_i_center"])[0])
+    upper_inner = sort_x(mapping["lip_i_upper"])
+    left_inner = upper_inner[triples[upper_inner, 0] < upper_inner_x]
+    right_inner = upper_inner[triples[upper_inner, 0] > upper_inner_x]
+    lower_inner_x = float(_pick(triples, mapping["lower_i_center"])[0])
+    lower_inner = sort_x(mapping["lip_i_lower"])
+    bottom_left = lower_inner[triples[lower_inner, 0] < lower_inner_x]
+    bottom_right = lower_inner[triples[lower_inner, 0] > lower_inner_x]
+    push(
+        [
+            mapping["lip_i_r_corner"],
+            int(left_inner[0]) if len(left_inner) else mapping["upper_i_center"],
+            mapping["upper_i_center"],
+            int(right_inner[-1]) if len(right_inner) else mapping["upper_i_center"],
+            mapping["lip_i_l_corner"],
+            int(bottom_right[-1]) if len(bottom_right) else mapping["lower_i_center"],
+            mapping["lower_i_center"],
+            int(bottom_left[0]) if len(bottom_left) else mapping["lower_i_center"],
+        ]
+    )
+    push([mapping["r_pupil"], mapping["l_pupil"]])
+    return np.stack(face).astype(np.float32)
+
+
+def _target_triples(triples: np.ndarray, target: str) -> np.ndarray:
+    key = _pose_target_key(target)
+    if key == "coco_18":
+        return _subset(triples, _COCO18)
+    if key == "sapiens_308":
+        return triples.astype(np.float32)
+    if key == "hand_21":
+        return np.concatenate([_subset(triples, _LEFT_HAND21), _subset(triples, _RIGHT_HAND21)], axis=0)
+    if key == "face_70":
+        return _face70(triples)
+    return _subset(triples, _BODY25)
+
+
+def _flat(values: np.ndarray) -> list[float]:
+    return [float(item) for item in values.reshape(-1)]
+
+
+def _draw_pose(canvas: np.ndarray, triples: np.ndarray, edges: tuple[tuple[int, int], ...], threshold: float) -> None:
+    import cv2
+
+    colors = (
+        (255, 0, 85),
+        (255, 85, 0),
+        (255, 170, 0),
+        (170, 255, 0),
+        (85, 255, 0),
+        (0, 255, 85),
+        (0, 255, 170),
+        (0, 170, 255),
+        (0, 85, 255),
+        (85, 0, 255),
+        (170, 0, 255),
+        (255, 0, 170),
+    )
+    height, width = canvas.shape[:2]
+    for index, (left, right) in enumerate(edges):
+        if left >= len(triples) or right >= len(triples):
+            continue
+        a = triples[left]
+        b = triples[right]
+        if a[2] < threshold or b[2] < threshold:
+            continue
+        ax, ay = int(round(float(a[0]))), int(round(float(a[1])))
+        bx, by = int(round(float(b[0]))), int(round(float(b[1])))
+        if 0 <= ax < width and 0 <= ay < height and 0 <= bx < width and 0 <= by < height:
+            cv2.line(canvas, (ax, ay), (bx, by), colors[index % len(colors)], 3, lineType=cv2.LINE_AA)
+    for index, point in enumerate(triples):
+        if point[2] < threshold:
+            continue
+        x, y = int(round(float(point[0]))), int(round(float(point[1])))
+        if 0 <= x < width and 0 <= y < height:
+            cv2.circle(canvas, (x, y), 3, colors[index % len(colors)], -1, lineType=cv2.LINE_AA)
+
+
+def _target_edges(raw: dict[str, Any], target: str) -> tuple[tuple[int, int], ...]:
+    key = _pose_target_key(target)
+    if key == "coco_18":
+        return _COCO18_EDGES
+    if key == "hand_21":
+        return _HAND21_EDGES + tuple((a + 21, b + 21) for a, b in _HAND21_EDGES)
+    if key == "face_70":
+        return _FACE70_EDGES
+    if key == "sapiens_308":
+        return tuple(tuple(map(int, link[:2])) for link in raw.get("skeleton_links", []) if len(link) >= 2)
+    return _BODY25_EDGES
+
+
+def _pose_target_image(raw: dict[str, Any], image: torch.Tensor, target: str, overlay: bool = False) -> torch.Tensor:
+    batch = _comfy_image(image)
+    threshold = float(raw.get("keypoint_threshold", 0.3))
+    rendered = []
+    frames = raw.get("frames", [])
+    for index, source in enumerate(batch):
+        if overlay:
+            canvas = source.numpy()
+            canvas = np.repeat(canvas, 3, axis=-1) if canvas.shape[-1] == 1 else canvas[..., :3]
+            canvas = (np.clip(canvas, 0, 1) * 255).round().astype(np.uint8)
+        else:
+            canvas = np.zeros(tuple(source.shape[:2]) + (3,), dtype=np.uint8)
+        if index < len(frames):
+            frame = frames[index]
+            for keypoints, scores in zip(frame.get("keypoints", []), frame.get("keypoint_scores", [])):
+                _draw_pose(canvas, _target_triples(_triples(keypoints, scores), target), _target_edges(raw, target), threshold)
+        rendered.append(torch.from_numpy(canvas).float() / 255.0)
+    return _comfy_image(torch.stack(rendered, dim=0))
+
+
+def _openpose_json(raw: dict[str, Any], target: str) -> str:
+    target_key = _pose_target_key(target)
     frames = []
     for image_index, frame in enumerate(raw.get("frames", [])):
         people = []
@@ -292,18 +631,38 @@ def _openpose_json(raw: dict[str, Any]) -> str:
             frame.get("keypoints", []),
             frame.get("keypoint_scores", []),
         ):
-            flat = []
-            for xy, score in zip(keypoints, scores):
-                flat.extend([float(xy[0]), float(xy[1]), float(score)])
-            people.append(
-                {
-                    "person_id": [-1],
-                    "bbox": bbox,
-                    "pose_keypoints_2d": flat,
-                    "sapiens_keypoints_2d": flat,
-                }
-            )
-        frames.append({"version": 1.3, "image_index": image_index, "people": people})
+            source = _triples(keypoints, scores)
+            person = {
+                "person_id": [-1],
+                "bbox": bbox,
+                "target": target,
+                "pose_keypoints_2d": [],
+                "hand_left_keypoints_2d": [],
+                "hand_right_keypoints_2d": [],
+                "face_keypoints_2d": [],
+                "sapiens_keypoints_2d": _flat(source),
+            }
+            if target_key in ("body_25", "coco_18"):
+                person["pose_keypoints_2d"] = _flat(_target_triples(source, target))
+            elif target_key == "sapiens_308":
+                person["pose_keypoints_2d"] = _flat(source)
+            elif target_key == "hand_21":
+                person["hand_left_keypoints_2d"] = _flat(_subset(source, _LEFT_HAND21))
+                person["hand_right_keypoints_2d"] = _flat(_subset(source, _RIGHT_HAND21))
+            elif target_key == "face_70":
+                person["face_keypoints_2d"] = _flat(_face70(source))
+            people.append(person)
+        height, width = frame.get("image_size", [0, 0])
+        frames.append(
+            {
+                "version": 1.3,
+                "image_index": image_index,
+                "canvas_width": int(width),
+                "canvas_height": int(height),
+                "target": target,
+                "people": people,
+            }
+        )
     return json.dumps(frames[0] if len(frames) == 1 else frames, ensure_ascii=True)
 
 
@@ -424,17 +783,25 @@ class Sapiens2Pose:
     @classmethod
     def INPUT_TYPES(cls):
         return {
-            "required": {"model": ("SAPIENS2_MODEL",), "image": ("IMAGE",)},
+            "required": {
+                "model": ("SAPIENS2_MODEL",),
+                "image": ("IMAGE",),
+                "target": (POSE_TARGETS, {"default": "BODY_25"}),
+            },
             "optional": {"bboxes": ("SAPIENS2_BBOXES",)},
         }
 
-    RETURN_TYPES = ("IMAGE", "STRING")
-    RETURN_NAMES = ("preview", "openpose_json")
+    RETURN_TYPES = ("IMAGE", "IMAGE", "STRING")
+    RETURN_NAMES = ("openpose_image", "preview", "openpose_json")
     FUNCTION = "run"
     CATEGORY = "Sapiens2"
 
-    def run(self, model, image, bboxes=None):
+    def run(self, model, image, target: str = "BODY_25", bboxes=None):
         if not isinstance(model, Sapiens2PoseModel):
             _require_task(model, "pose")
-        preview, _, raw = Sapiens2PoseInference().run(pose_model=model, image=image, bboxes=bboxes)
-        return (_comfy_image(preview), _openpose_json(raw))
+        _, _, raw = Sapiens2PoseInference().run(pose_model=model, image=image, bboxes=bboxes)
+        return (
+            _pose_target_image(raw, image, target),
+            _pose_target_image(raw, image, target, overlay=True),
+            _openpose_json(raw, target),
+        )
