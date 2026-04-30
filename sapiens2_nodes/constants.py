@@ -1,11 +1,6 @@
 import torch
 
 
-TARGET_SIZE = (1024, 768)  # H, W. Official Sapiens2 dense-task resolution.
-PATCH_SIZE = 16
-IMAGENET_MEAN = (123.675, 116.28, 103.53)
-IMAGENET_STD = (58.395, 57.12, 57.375)
-
 ARCH_SPECS = {
     "sapiens2_0.4b": {"embed_dim": 1024},
     "sapiens2_0.8b": {"embed_dim": 1280},
@@ -15,15 +10,11 @@ ARCH_SPECS = {
 MODEL_SIZE_CHOICES = ("0.4b", "0.8b", "1b", "5b")
 DOWNLOAD_MODEL_SIZE_CHOICES = ("0.1b", "0.4b", "0.8b", "1b", "1b_4k", "5b")
 
-TASKS = ("segmentation", "normal", "pointmap", "albedo")
-TASK_CHOICES = ("auto",) + TASKS
-ARCH_CHOICES = ("auto",) + tuple(ARCH_SPECS.keys())
 DTYPES = ("auto", "fp32", "fp16", "bf16")
 DEVICES = ("auto", "cuda", "mps", "cpu")
 COMBINE_MODES = ("max", "average", "min")
 SAPIENS2_HF_ORG = "facebook"
 POSE_DETECTOR_REPO = "facebook/detr-resnet-101-dc5"
-POSE_DETECTOR_DIR_NAME = POSE_DETECTOR_REPO.rsplit("/", 1)[-1]
 POSE_RTMDET_FILENAME = "rtmdet_m.pth"
 POSE_RTMDET_CONFIG_REL = "sapiens/pose/tools/vis/rtmdet_m_640-8xb32_coco-person.py"
 POSE_KEYPOINT_COUNT = 308

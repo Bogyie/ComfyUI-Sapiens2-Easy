@@ -1,17 +1,5 @@
-import os
 from pathlib import Path
-from typing import Iterable
 
-
-MODEL_FOLDER_NAMES = (
-    "sapiens2",
-    "sapiens2_seg",
-    "sapiens2_normal",
-    "sapiens2_pointmap",
-    "sapiens2_albedo",
-    "sapiens2_pose",
-    "sapiens2_detector",
-)
 
 _FOLDER_SUBDIRS = {
     "sapiens2_seg": "seg",
@@ -74,30 +62,3 @@ def get_model_root() -> Path:
     if folder_paths is not None:
         return Path(folder_paths.models_dir) / "sapiens2"
     return Path.cwd() / "models" / "sapiens2"
-
-
-def get_filename_list(folder_names: Iterable[str]) -> list[str]:
-    folder_paths = get_folder_paths_module()
-    if folder_paths is None:
-        return []
-    names = []
-    for folder_name in folder_names:
-        try:
-            names.extend(folder_paths.get_filename_list(folder_name))
-        except (AttributeError, KeyError):
-            continue
-    return sorted(set(names))
-
-
-def get_full_path(folder_names: Iterable[str], filename: str) -> str | None:
-    folder_paths = get_folder_paths_module()
-    if folder_paths is None:
-        return None
-    for folder_name in folder_names:
-        try:
-            path = folder_paths.get_full_path(folder_name, filename)
-        except (AttributeError, KeyError):
-            path = None
-        if path and os.path.isfile(path):
-            return path
-    return None
