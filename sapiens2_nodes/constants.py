@@ -50,7 +50,6 @@ SEG_PARTS = (
     "Tongue",
 )
 
-SEG_PART_OPTIONS = tuple(f"{idx:02d}: {name}" for idx, name in enumerate(SEG_PARTS))
 SEG_CLASS_COUNT = len(SEG_PARTS)
 
 SEG_PALETTE = torch.tensor(
