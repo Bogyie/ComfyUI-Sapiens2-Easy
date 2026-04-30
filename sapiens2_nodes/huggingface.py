@@ -15,7 +15,6 @@ HF_TASKS = {
     "albedo_custom": {"repo_task": None, "folder": "albedo", "loadable": True, "custom": True},
 }
 HF_DOWNLOAD_TASKS = tuple(HF_TASKS)
-HF_LOAD_TASKS = tuple(task for task, meta in HF_TASKS.items() if meta["loadable"])
 
 
 def _size_to_arch(model_size: str) -> str:

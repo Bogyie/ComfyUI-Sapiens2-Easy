@@ -1,5 +1,3 @@
-from typing import Any, Dict
-
 from .constants import COMBINE_MODES
 from .processing import _combine_channels, _process_mask, _require_result, _threshold_mask
 from .unified import run_result
