@@ -406,11 +406,17 @@ def _background_plane_from_pointmap(
         dtype=torch.float32,
     )
     vertices = (raw_vertices * axis - center_vec).numpy().astype(np.float32)
-    uvs = np.asarray([[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]], dtype=np.float32)
+    uvs = np.asarray([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]], dtype=np.float32)
     if not flip_y:
         uvs[:, 1] = 1.0 - uvs[:, 1]
     faces = np.asarray([[0, 1, 2], [0, 2, 3]], dtype=np.uint32)
-    return {"vertices": vertices, "uvs": uvs, "faces": faces, "texture": _background_plane_rgba(image, mask, mode)}
+    return {
+        "vertices": vertices,
+        "uvs": uvs,
+        "faces": faces,
+        "texture": _background_plane_rgba(image, mask, mode),
+        "alpha_mode": "MASK" if mode == "masked" and mask is not None else "OPAQUE",
+    }
 
 
 def _auto_splat_size(vertices: torch.Tensor, height: int, width: int, stride: int) -> float:
@@ -622,17 +628,18 @@ def _write_pointmap_glb(
         )
         images.append({"bufferView": bg_image_view, "mimeType": "image/png"})
         textures.append({"sampler": 0, "source": len(images) - 1})
-        materials.append(
-            {
-                "pbrMetallicRoughness": {
-                    "baseColorTexture": {"index": len(textures) - 1},
-                    "metallicFactor": 0.0,
-                    "roughnessFactor": 1.0,
-                },
-                "alphaMode": "BLEND",
-                "doubleSided": True,
-            }
-        )
+        material = {
+            "pbrMetallicRoughness": {
+                "baseColorTexture": {"index": len(textures) - 1},
+                "metallicFactor": 0.0,
+                "roughnessFactor": 1.0,
+            },
+            "doubleSided": True,
+        }
+        if background.get("alpha_mode") == "MASK":
+            material["alphaMode"] = "MASK"
+            material["alphaCutoff"] = 0.5
+        materials.append(material)
         bg_primitive = {
             "attributes": {"POSITION": bg_pos_accessor, "TEXCOORD_0": bg_pos_accessor + 1},
             "indices": bg_pos_accessor + 2,

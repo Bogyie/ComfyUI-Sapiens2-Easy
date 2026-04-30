@@ -128,17 +128,18 @@ def _save_textured_glb(
         )
         gltf["images"].append({"bufferView": bg_image_view, "mimeType": "image/png"})
         gltf["textures"].append({"sampler": 0, "source": len(gltf["images"]) - 1})
-        gltf["materials"].append(
-            {
-                "pbrMetallicRoughness": {
-                    "baseColorTexture": {"index": len(gltf["textures"]) - 1},
-                    "metallicFactor": 0.0,
-                    "roughnessFactor": 1.0,
-                },
-                "alphaMode": "BLEND",
-                "doubleSided": True,
-            }
-        )
+        material = {
+            "pbrMetallicRoughness": {
+                "baseColorTexture": {"index": len(gltf["textures"]) - 1},
+                "metallicFactor": 0.0,
+                "roughnessFactor": 1.0,
+            },
+            "doubleSided": True,
+        }
+        if background.get("alpha_mode") == "MASK":
+            material["alphaMode"] = "MASK"
+            material["alphaCutoff"] = 0.5
+        gltf["materials"].append(material)
         gltf["meshes"][0]["primitives"].append(
             {
                 "attributes": {"POSITION": bg_pos_accessor, "TEXCOORD_0": bg_pos_accessor + 1},
