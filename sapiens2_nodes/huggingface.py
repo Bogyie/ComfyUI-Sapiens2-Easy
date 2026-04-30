@@ -90,9 +90,61 @@ def _download_context(kwargs) -> str:
     return target
 
 
+def _comfy_tqdm_class():
+    try:
+        import comfy.utils
+        from huggingface_hub.utils import tqdm as hf_tqdm
+    except Exception:
+        return None
+
+    class ComfyTqdm(hf_tqdm):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self._comfy_progress = None
+            if self.total:
+                try:
+                    self._comfy_progress = comfy.utils.ProgressBar(int(self.total))
+                except Exception:
+                    self._comfy_progress = None
+
+        def update(self, n=1):
+            result = super().update(n)
+            if self._comfy_progress is not None and n:
+                try:
+                    self._comfy_progress.update(int(n))
+                except Exception:
+                    self._comfy_progress = None
+            return result
+
+        def reset(self, total=None):
+            result = super().reset(total=total)
+            self._comfy_progress = None
+            if self.total:
+                try:
+                    self._comfy_progress = comfy.utils.ProgressBar(int(self.total))
+                except Exception:
+                    self._comfy_progress = None
+            return result
+
+    return ComfyTqdm
+
+
+def _call_download(download_fn, kwargs):
+    call_kwargs = dict(kwargs)
+    if call_kwargs.get("tqdm_class") is None:
+        call_kwargs.pop("tqdm_class", None)
+    try:
+        return download_fn(**call_kwargs)
+    except TypeError as exc:
+        if "tqdm_class" not in str(exc):
+            raise
+        call_kwargs.pop("tqdm_class", None)
+        return download_fn(**call_kwargs)
+
+
 def _download_with_hf_client_retry(download_fn, **kwargs):
     try:
-        return download_fn(**kwargs)
+        return _call_download(download_fn, kwargs)
     except RuntimeError as exc:
         if "client has been closed" not in str(exc):
             raise
@@ -103,7 +155,7 @@ def _download_with_hf_client_retry(download_fn, **kwargs):
         except Exception:
             pass
         try:
-            return download_fn(**kwargs)
+            return _call_download(download_fn, kwargs)
         except Exception as retry_exc:
             raise RuntimeError(
                 "Hugging Face download failed after resetting a closed HTTP client "
@@ -142,6 +194,7 @@ def download_sapiens2_from_hf(
         token=token.strip() or None,
         force_download=force_download,
         local_files_only=local_files_only,
+        tqdm_class=_comfy_tqdm_class(),
     )
     return path, resolved_repo, resolved_filename
 
@@ -177,5 +230,6 @@ def download_sapiens2_pose_detector_from_hf(
         token=token.strip() or None,
         force_download=force_download,
         local_files_only=local_files_only,
+        tqdm_class=_comfy_tqdm_class(),
     )
     return path, resolved_repo

@@ -12,7 +12,7 @@ This project wraps Sapiens2 human-centric vision models with a small, practical 
   Segmentation, normal, pointmap, and pose all use the same loader interface.
 
 - **Auto download, auto reuse**
-  Models are downloaded into `ComfyUI/models/sapiens2/` and reused on the next run. The loader reports where the model came from.
+  Models are downloaded into `ComfyUI/models/sapiens2/` and reused on the next run. Download progress is shown in ComfyUI when the installed Hugging Face Hub version supports progress hooks.
 
 - **Beginner-friendly segmentation selection**
   Add part rows visually instead of editing JSON. Pick a part group, choose detail, and get a ready-to-use merged mask.
