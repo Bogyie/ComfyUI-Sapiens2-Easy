@@ -1,0 +1,16 @@
+# Keep torch, torchvision, torchaudio, xformers, triton, and CUDA wheels out of this file.
+# Install with `python install.py --install-deps` to pin the existing ComfyUI torch stack.
+safetensors>=0.4.0
+huggingface_hub>=0.23.0
+opencv-python
+numpy
+pillow
+scipy
+matplotlib
+iopath
+prettytable
+termcolor
+accelerate
+rich
+transformers
+timm
