@@ -242,7 +242,7 @@ def _detect_persons(image_rgb: np.ndarray, pose_model: Sapiens2PoseModel, bbox_t
     processor = first
     detector = second
     inputs = processor(images=Image.fromarray(image_rgb), return_tensors="pt").to(pose_model.device)
-    with torch.no_grad():
+    with torch.inference_mode():
         outputs = detector(**inputs)
     target_sizes = torch.tensor([image_rgb.shape[:2]], device=pose_model.device)
     results = processor.post_process_object_detection(outputs, target_sizes=target_sizes, threshold=bbox_threshold)[0]
@@ -399,7 +399,7 @@ def _run_pose_one(
         data_samples_list.append(data["data_samples"])
 
     inputs = torch.cat(inputs_list, dim=0).to(device=pose_model.device, dtype=pose_model.dtype)
-    with torch.no_grad():
+    with torch.inference_mode():
         pred = pose_model.model(inputs)
         if flip_test:
             pred_flipped = pose_model.model(inputs.flip(-1)).flip(-1)
@@ -568,6 +568,7 @@ class Sapiens2PoseInference:
         show_points: bool = True,
         show_skeleton: bool = True,
         bboxes: dict[str, Any] | None = None,
+        render_outputs: bool = True,
     ):
         resolved_bboxes = _resolve_pose_bboxes(
             image_batch=image,
@@ -590,19 +591,20 @@ class Sapiens2PoseInference:
                 frame_boxes,
                 flip_test,
             )
-            rendered_rgb = _render_pose(
-                image_rgb,
-                keypoints,
-                scores,
-                pose_model.metainfo,
-                keypoint_threshold,
-                radius,
-                thickness,
-                show_points,
-                show_skeleton,
-            )
-            rendered.append(torch.from_numpy(rendered_rgb.astype(np.float32) / 255.0))
-            masks.append(_pose_mask(image_rgb.shape[:2], keypoints, scores, keypoint_threshold, radius, pose_model.metainfo))
+            if render_outputs:
+                rendered_rgb = _render_pose(
+                    image_rgb,
+                    keypoints,
+                    scores,
+                    pose_model.metainfo,
+                    keypoint_threshold,
+                    radius,
+                    thickness,
+                    show_points,
+                    show_skeleton,
+                )
+                rendered.append(torch.from_numpy(rendered_rgb.astype(np.float32) / 255.0))
+                masks.append(_pose_mask(image_rgb.shape[:2], keypoints, scores, keypoint_threshold, radius, pose_model.metainfo))
             frames.append(
                 {
                     "image_size": [int(image_rgb.shape[0]), int(image_rgb.shape[1])],
@@ -634,4 +636,6 @@ class Sapiens2PoseInference:
             "source": resolved_bboxes["source"],
             "keypoint_threshold": float(keypoint_threshold),
         }
+        if not render_outputs:
+            return (torch.empty(0), torch.empty(0), raw)
         return (torch.stack(rendered, 0), torch.stack(masks, 0), raw)

@@ -177,17 +177,16 @@ def _selected_parts(parts: str) -> list[int] | None:
 def _part_masks(class_ids: torch.Tensor, part_ids: list[int]) -> torch.Tensor:
     if not part_ids:
         return torch.zeros_like(class_ids, dtype=torch.float32)
-    masks = [(class_ids == idx).float() for idx in part_ids]
-    return _comfy_mask(torch.stack(masks, dim=1).flatten(0, 1))
+    ids = torch.as_tensor(part_ids, dtype=class_ids.dtype, device=class_ids.device)
+    return _comfy_mask(class_ids.unsqueeze(1).eq(ids.view(1, -1, 1, 1)).float().flatten(0, 1))
 
 
 def _merge_parts(class_ids: torch.Tensor, part_ids: list[int], invert: bool) -> torch.Tensor:
     if not part_ids:
         merged = torch.zeros_like(class_ids, dtype=torch.float32)
     else:
-        merged = torch.zeros_like(class_ids, dtype=torch.float32)
-        for idx in part_ids:
-            merged = torch.maximum(merged, (class_ids == idx).float())
+        ids = torch.as_tensor(part_ids, dtype=class_ids.dtype, device=class_ids.device)
+        merged = torch.isin(class_ids, ids).float()
     if invert:
         merged = 1.0 - merged
     return _comfy_mask(merged)
@@ -799,7 +798,7 @@ class Sapiens2Pose:
     def run(self, model, image, target: str = "BODY_25", bboxes=None):
         if not isinstance(model, Sapiens2PoseModel):
             _require_task(model, "pose")
-        _, _, raw = Sapiens2PoseInference().run(pose_model=model, image=image, bboxes=bboxes)
+        _, _, raw = Sapiens2PoseInference().run(pose_model=model, image=image, bboxes=bboxes, render_outputs=False)
         return (
             _pose_target_image(raw, image, target),
             _pose_target_image(raw, image, target, overlay=True),
