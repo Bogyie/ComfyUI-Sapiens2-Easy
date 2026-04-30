@@ -129,7 +129,7 @@ def _resolve_or_download_detector(
     return path, "huggingface_detector_download"
 
 
-class Sapiens2LoadModel:
+class Sapiens2LoadModelAdvanced:
     @classmethod
     def INPUT_TYPES(cls):
         return {
@@ -159,7 +159,7 @@ class Sapiens2LoadModel:
     RETURN_TYPES = ("SAPIENS2_MODEL", "STRING")
     RETURN_NAMES = ("model", "load_info")
     FUNCTION = "load"
-    CATEGORY = "Sapiens2"
+    CATEGORY = "Sapiens2/Advanced"
 
     def load(
         self,
@@ -239,7 +239,26 @@ class Sapiens2LoadModel:
         return (model, describe_model_source(task, checkpoint, checkpoint_source, extra))
 
 
-class Sapiens2Run:
+class Sapiens2LoadModel:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "task": (TASK_CHOICES,),
+                "model_size": (MODEL_SIZE_CHOICES, {"default": "1b"}),
+            }
+        }
+
+    RETURN_TYPES = ("SAPIENS2_MODEL", "STRING")
+    RETURN_NAMES = ("model", "load_info")
+    FUNCTION = "load"
+    CATEGORY = "Sapiens2/Easy"
+
+    def load(self, task: str, model_size: str):
+        return Sapiens2LoadModelAdvanced().load(task=task, model_size=model_size)
+
+
+class Sapiens2RunAdvanced:
     @classmethod
     def INPUT_TYPES(cls):
         return {
@@ -266,7 +285,7 @@ class Sapiens2Run:
     RETURN_TYPES = ("IMAGE", "MASK", "MASK", "SAPIENS2_RESULT")
     RETURN_NAMES = ("image", "mask", "aux_mask", "result")
     FUNCTION = "run"
-    CATEGORY = "Sapiens2"
+    CATEGORY = "Sapiens2/Advanced"
 
     def run(
         self,
@@ -310,5 +329,24 @@ class Sapiens2Run:
         )
 
 
+class Sapiens2Run:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "model": ("SAPIENS2_MODEL",),
+                "image": ("IMAGE",),
+            }
+        }
+
+    RETURN_TYPES = ("IMAGE", "MASK", "MASK", "SAPIENS2_RESULT")
+    RETURN_NAMES = ("image", "mask", "aux_mask", "result")
+    FUNCTION = "run"
+    CATEGORY = "Sapiens2/Easy"
+
+    def run(self, model: Sapiens2Model | Sapiens2PoseModel, image):
+        return Sapiens2RunAdvanced().run(model=model, image=image)
+
+
 def run_result(model: Sapiens2Model | Sapiens2PoseModel, image, **kwargs) -> dict[str, Any]:
-    return Sapiens2Run().run(model, image, **kwargs)[3]
+    return Sapiens2RunAdvanced().run(model, image, **kwargs)[3]
