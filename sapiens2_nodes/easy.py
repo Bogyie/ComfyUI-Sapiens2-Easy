@@ -314,6 +314,32 @@ def _background_plane_rgba(image: torch.Tensor, mask: torch.Tensor | None, mode:
     return (rgba.clamp(0, 1).numpy() * 255.0).round().astype(np.uint8)
 
 
+def _fit_bbox_to_aspect(
+    x_min: float,
+    x_max: float,
+    y_min: float,
+    y_max: float,
+    image_width: int,
+    image_height: int,
+) -> tuple[float, float, float, float]:
+    width = max(float(x_max - x_min), 1e-6)
+    height = max(float(y_max - y_min), 1e-6)
+    target_aspect = max(float(image_width), 1.0) / max(float(image_height), 1.0)
+    current_aspect = width / height
+    center_x = (float(x_min) + float(x_max)) * 0.5
+    center_y = (float(y_min) + float(y_max)) * 0.5
+    if current_aspect < target_aspect:
+        width = height * target_aspect
+    else:
+        height = width / target_aspect
+    return (
+        center_x - width * 0.5,
+        center_x + width * 0.5,
+        center_y - height * 0.5,
+        center_y + height * 0.5,
+    )
+
+
 def _background_plane_from_pointmap(
     pointmap: torch.Tensor,
     image: torch.Tensor,
@@ -352,6 +378,15 @@ def _background_plane_from_pointmap(
     if abs(y_max - y_min) < 1e-6:
         y_min -= 0.5
         y_max += 0.5
+    image_shape = _comfy_image(image).shape
+    x_min, x_max, y_min, y_max = _fit_bbox_to_aspect(
+        x_min,
+        x_max,
+        y_min,
+        y_max,
+        int(image_shape[2]),
+        int(image_shape[1]),
+    )
 
     z = float(reference_vertices[:, 2].min().item() - float(offset)) if flip_z else float(reference_vertices[:, 2].max().item() + float(offset))
     vertices = np.asarray(
