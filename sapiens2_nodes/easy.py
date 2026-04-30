@@ -591,7 +591,16 @@ def _flat(values: np.ndarray) -> list[float]:
     return [float(item) for item in values.reshape(-1)]
 
 
-def _draw_pose(canvas: np.ndarray, triples: np.ndarray, edges: tuple[tuple[int, int], ...], threshold: float) -> None:
+def _draw_pose(
+    canvas: np.ndarray,
+    triples: np.ndarray,
+    edges: tuple[tuple[int, int], ...],
+    threshold: float,
+    radius: int = 3,
+    thickness: int = 3,
+    show_points: bool = True,
+    show_skeleton: bool = True,
+) -> None:
     import cv2
 
     colors = (
@@ -609,23 +618,25 @@ def _draw_pose(canvas: np.ndarray, triples: np.ndarray, edges: tuple[tuple[int, 
         (255, 0, 170),
     )
     height, width = canvas.shape[:2]
-    for index, (left, right) in enumerate(edges):
-        if left >= len(triples) or right >= len(triples):
-            continue
-        a = triples[left]
-        b = triples[right]
-        if a[2] < threshold or b[2] < threshold:
-            continue
-        ax, ay = int(round(float(a[0]))), int(round(float(a[1])))
-        bx, by = int(round(float(b[0]))), int(round(float(b[1])))
-        if 0 <= ax < width and 0 <= ay < height and 0 <= bx < width and 0 <= by < height:
-            cv2.line(canvas, (ax, ay), (bx, by), colors[index % len(colors)], 3, lineType=cv2.LINE_AA)
-    for index, point in enumerate(triples):
-        if point[2] < threshold:
-            continue
-        x, y = int(round(float(point[0]))), int(round(float(point[1])))
-        if 0 <= x < width and 0 <= y < height:
-            cv2.circle(canvas, (x, y), 3, colors[index % len(colors)], -1, lineType=cv2.LINE_AA)
+    if show_skeleton:
+        for index, (left, right) in enumerate(edges):
+            if left >= len(triples) or right >= len(triples):
+                continue
+            a = triples[left]
+            b = triples[right]
+            if a[2] < threshold or b[2] < threshold:
+                continue
+            ax, ay = int(round(float(a[0]))), int(round(float(a[1])))
+            bx, by = int(round(float(b[0]))), int(round(float(b[1])))
+            if 0 <= ax < width and 0 <= ay < height and 0 <= bx < width and 0 <= by < height:
+                cv2.line(canvas, (ax, ay), (bx, by), colors[index % len(colors)], max(1, int(thickness)), lineType=cv2.LINE_AA)
+    if show_points:
+        for index, point in enumerate(triples):
+            if point[2] < threshold:
+                continue
+            x, y = int(round(float(point[0]))), int(round(float(point[1])))
+            if 0 <= x < width and 0 <= y < height:
+                cv2.circle(canvas, (x, y), max(1, int(radius)), colors[index % len(colors)], -1, lineType=cv2.LINE_AA)
 
 
 def _target_edges(raw: dict[str, Any], target: str) -> tuple[tuple[int, int], ...]:
@@ -641,7 +652,16 @@ def _target_edges(raw: dict[str, Any], target: str) -> tuple[tuple[int, int], ..
     return _BODY25_EDGES
 
 
-def _pose_target_image(raw: dict[str, Any], image: torch.Tensor, target: str, overlay: bool = False) -> torch.Tensor:
+def _pose_target_image(
+    raw: dict[str, Any],
+    image: torch.Tensor,
+    target: str,
+    overlay: bool = False,
+    radius: int = 3,
+    thickness: int = 3,
+    show_points: bool = True,
+    show_skeleton: bool = True,
+) -> torch.Tensor:
     batch = _comfy_image(image)
     threshold = float(raw.get("keypoint_threshold", 0.3))
     rendered = []
@@ -656,7 +676,16 @@ def _pose_target_image(raw: dict[str, Any], image: torch.Tensor, target: str, ov
         if index < len(frames):
             frame = frames[index]
             for keypoints, scores in zip(frame.get("keypoints", []), frame.get("keypoint_scores", [])):
-                _draw_pose(canvas, _target_triples(_triples(keypoints, scores), target), _target_edges(raw, target), threshold)
+                _draw_pose(
+                    canvas,
+                    _target_triples(_triples(keypoints, scores), target),
+                    _target_edges(raw, target),
+                    threshold,
+                    radius=radius,
+                    thickness=thickness,
+                    show_points=show_points,
+                    show_skeleton=show_skeleton,
+                )
         rendered.append(torch.from_numpy(canvas).float() / 255.0)
     return _comfy_image(torch.stack(rendered, dim=0))
 

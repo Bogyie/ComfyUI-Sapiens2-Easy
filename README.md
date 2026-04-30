@@ -119,6 +119,21 @@ Examples:
 
 If no part rows are added, the node merges all foreground body parts.
 
+### Sapiens2 Segmentation Advanced
+
+Use this when you need the same segmentation output with extra control.
+
+Additional options:
+
+- `overlay_opacity`: preview overlay strength
+- `preserve_background`: keep the original background outside the optional input mask
+- `mask`: optional input mask limiting the output area
+
+Additional outputs:
+
+- `foreground_mask`: full foreground mask from the segmentation model
+- `result`: raw Sapiens2 inference metadata
+
 ### Sapiens2 Normal
 
 Runs normal estimation.
@@ -133,6 +148,10 @@ Inputs:
 Outputs:
 
 - `normal_map`: normal visualization using the selected preview mode
+
+### Sapiens2 Normal Advanced
+
+Adds `foreground_mask`, raw `result`, and `preserve_background` for masked workflows.
 
 ### Sapiens2 Pointmap
 
@@ -194,6 +213,25 @@ Outputs:
 - `openpose_image`: black-background pose render for the selected target
 - `preview`: selected target rendered over the source image
 - `openpose_json`: OpenPose-style JSON string for the selected target, with raw 308-keypoint data retained as `sapiens_keypoints_2d`
+
+### Sapiens2 Pose Advanced
+
+Use this when you want OpenPose-compatible outputs but need detector and render controls.
+
+Additional options:
+
+- `keypoint_threshold`: minimum keypoint score used for rendering and masks
+- `bbox_threshold`: person detector score threshold
+- `nms_threshold`: detector non-maximum suppression threshold
+- `radius`, `thickness`: render size controls
+- `fallback_full_image_bbox`: use the full image if no person bbox is detected
+- `flip_test`: run pose flip-test refinement
+- `show_points`, `show_skeleton`: choose what the pose preview renders
+
+Additional outputs:
+
+- `keypoint_mask`: pose keypoint mask
+- `result`: raw 308-keypoint pose result
 
 ## Install
 
