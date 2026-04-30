@@ -250,6 +250,16 @@ def _unique_path(prefix: str, suffix: str) -> Path:
     raise FileExistsError(f"Could not create a unique {suffix} output path.")
 
 
+def _ui_3d_entry(path: str | Path) -> dict[str, str]:
+    path = Path(path)
+    try:
+        relative = path.relative_to(_output_root())
+        subfolder = "" if relative.parent == Path(".") else relative.parent.as_posix()
+        return {"filename": relative.name, "subfolder": subfolder, "type": "output", "mediaType": "3d"}
+    except Exception:
+        return {"filename": str(path), "subfolder": "", "type": "output", "mediaType": "3d"}
+
+
 def _pad4(data: bytes, fill: bytes = b"\x00") -> bytes:
     return data + fill * ((4 - len(data) % 4) % 4)
 
@@ -869,7 +879,7 @@ class Sapiens2Pointmap:
         _require_task(model, "pointmap")
         preview, _, _, raw = Sapiens2DenseInference().run(model, image, mask=mask)
         glb_path = _write_pointmap_glb(raw["pointmap"][0], image)
-        return (_format_preview(image, preview, preview_mode), glb_path)
+        return {"ui": {"3d": [_ui_3d_entry(glb_path)]}, "result": (_format_preview(image, preview, preview_mode), glb_path)}
 
 
 class Sapiens2Pose:

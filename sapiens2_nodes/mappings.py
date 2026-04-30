@@ -6,6 +6,7 @@ from .easy import (
     Sapiens2Pose,
     Sapiens2Segmentation,
 )
+from .pointmap_advanced import Sapiens2PointmapMeshAdvanced
 
 
 NODE_CLASS_MAPPINGS = {
@@ -14,6 +15,7 @@ NODE_CLASS_MAPPINGS = {
     "Sapiens2Segmentation": Sapiens2Segmentation,
     "Sapiens2Normal": Sapiens2Normal,
     "Sapiens2Pointmap": Sapiens2Pointmap,
+    "Sapiens2PointmapMeshAdvanced": Sapiens2PointmapMeshAdvanced,
     "Sapiens2Pose": Sapiens2Pose,
 }
 
@@ -23,5 +25,6 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "Sapiens2Segmentation": "Sapiens2 Segmentation",
     "Sapiens2Normal": "Sapiens2 Normal",
     "Sapiens2Pointmap": "Sapiens2 Pointmap",
+    "Sapiens2PointmapMeshAdvanced": "Sapiens2 Pointmap Mesh Advanced",
     "Sapiens2Pose": "Sapiens2 Pose",
 }

@@ -148,7 +148,30 @@ Inputs:
 Outputs:
 
 - `preview`: pointmap/depth-style preview using the selected preview mode
-- `pointmap_glb`: generated `.glb` path
+- `pointmap_glb`: generated `.glb` path, also shown in ComfyUI's 3D preview UI when available
+
+### Sapiens2 Pointmap Mesh Advanced
+
+Runs pointmap estimation and writes a textured GLB mesh for 3D preview/export workflows. This is heavier than the basic pointmap node, but produces connected triangles with UVs and the source image embedded as texture.
+
+Inputs:
+
+- `model`: pointmap model
+- `image`: input image used for both inference and texture
+- `preview_mode`: `result`, `overlay`, `side_by_side`, `source`
+- `filename_prefix`: output filename prefix
+- `mesh_stride`: mesh resolution step. `1` is highest detail, higher values are lighter.
+- `rtol`: 3x3 depth-jump tolerance for removing silhouette/edge triangles
+- `min_depth`, `max_depth`: valid Z range
+- `center_mesh`: center vertices around their mean
+- `flip_yz`: flip Y/Z axes for a more conventional 3D view
+- `mask`: optional foreground mask
+
+Outputs:
+
+- `preview`: pointmap/depth-style preview using the selected preview mode
+- `glb_paths`: generated `.glb` path list
+- `model_3d`: first generated `.glb` path, suitable for ComfyUI 3D preview nodes
 
 ### Sapiens2 Pose
 
