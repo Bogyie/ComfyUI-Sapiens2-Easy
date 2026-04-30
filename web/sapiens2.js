@@ -36,11 +36,13 @@ function parseRows(value) {
 
 function hideWidget(widget) {
   widget.type = "hidden";
-  widget.computeSize = () => [0, -4];
+  widget.hidden = true;
+  widget.computeSize = () => [0, 0];
+  widget.draw = () => {};
 }
 
 function syncParts(node) {
-  const rows = (node.sapiens2PartRows || []).map((row) => ({
+  const rows = (node.sapiens2Parts || []).map((row) => ({
     enabled: Boolean(row.enabled.value),
     name: row.name.value,
     detail: row.detail.value,
@@ -49,6 +51,10 @@ function syncParts(node) {
   if (partsWidget) {
     partsWidget.value = JSON.stringify(rows);
   }
+}
+
+function partRows(node) {
+  return node.sapiens2Parts || [];
 }
 
 function legacyName(row = {}) {
@@ -97,13 +103,35 @@ function setDetailOptions(nameWidget, detailWidget) {
   }
 }
 
-function addPartRow(node, row = {}) {
-  node.sapiens2PartRows ||= [];
-  const index = node.sapiens2PartRows.length + 1;
-  const enabled = node.addWidget("toggle", `part_${index}_on`, row.enabled ?? true, () => syncParts(node));
+function rowState(row = {}) {
+  return {
+    enabled: row.enabled ?? true,
+    name: legacyName(row),
+    detail: legacyDetail(row),
+  };
+}
+
+function removePartWidgets(node) {
+  node.widgets = (node.widgets || []).filter((widget) => !widget.name?.startsWith("sapiens2_part_"));
+  node.sapiens2Parts = [];
+}
+
+function rebuildPartRows(node, rows) {
+  removePartWidgets(node);
+  for (const row of rows) {
+    addPartRow(node, rowState(row), false);
+  }
+  syncParts(node);
+  node.setDirtyCanvas(true, true);
+}
+
+function addPartRow(node, row = {}, dirty = true) {
+  node.sapiens2Parts ||= [];
+  const index = node.sapiens2Parts.length + 1;
+  const enabled = node.addWidget("toggle", `sapiens2_part_${index}_on`, row.enabled ?? true, () => syncParts(node));
   const name = node.addWidget(
     "combo",
-    `part_${index}_name`,
+    `sapiens2_part_${index}_name`,
     legacyName(row),
     () => {
       setDetailOptions(name, detail);
@@ -113,24 +141,27 @@ function addPartRow(node, row = {}) {
   );
   const detail = node.addWidget(
     "combo",
-    `part_${index}_detail`,
+    `sapiens2_part_${index}_detail`,
     legacyDetail(row),
     () => syncParts(node),
     { values: SEG_PARTS[legacyName(row)] || ["all"] }
   );
   setDetailOptions(name, detail);
-  const remove = node.addWidget("button", `remove_${index}`, "remove", () => {
-    enabled.value = false;
-    enabled.disabled = true;
-    name.disabled = true;
-    detail.disabled = true;
-    remove.disabled = true;
-    syncParts(node);
-    node.setDirtyCanvas(true, true);
+  const remove = node.addWidget("button", `sapiens2_part_${index}_remove`, "remove", () => {
+    const rows = partRows(node)
+      .filter((item) => item.remove !== remove)
+      .map((item) => ({
+        enabled: item.enabled.value,
+        name: item.name.value,
+        detail: item.detail.value,
+      }));
+    rebuildPartRows(node, rows);
   });
-  node.sapiens2PartRows.push({ enabled, name, detail, remove });
+  node.sapiens2Parts.push({ enabled, name, detail, remove });
   syncParts(node);
-  node.setDirtyCanvas(true, true);
+  if (dirty) {
+    node.setDirtyCanvas(true, true);
+  }
 }
 
 function setupSegmentationNode(node) {
@@ -146,8 +177,9 @@ function setupSegmentationNode(node) {
   hideWidget(partsWidget);
   node.addWidget("button", "+ add part", "add", () => addPartRow(node));
   for (const row of savedRows) {
-    addPartRow(node, row);
+    addPartRow(node, row, false);
   }
+  syncParts(node);
 
   const originalOnSerialize = node.onSerialize;
   node.onSerialize = function (data) {
@@ -157,7 +189,7 @@ function setupSegmentationNode(node) {
 }
 
 function restorePartRows(node) {
-  if (!node.sapiens2PartsReady || node.sapiens2PartRows?.length) {
+  if (!node.sapiens2PartsReady || node.sapiens2Parts?.length) {
     return;
   }
   const partsWidget = node.widgets?.find((widget) => widget.name === "parts");

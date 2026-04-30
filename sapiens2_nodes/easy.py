@@ -156,6 +156,14 @@ def _merge_parts(class_ids: torch.Tensor, part_ids: list[int], invert: bool) -> 
     return _comfy_mask(merged)
 
 
+def _mask_preview(image: torch.Tensor, mask: torch.Tensor, alpha: float = 0.55) -> torch.Tensor:
+    image = _comfy_image(image)
+    mask = _comfy_mask(mask)
+    color = torch.tensor([0.0, 1.0, 1.0], dtype=image.dtype).view(1, 1, 1, 3)
+    preview = torch.where(mask.unsqueeze(-1) > 0, image * (1.0 - alpha) + color * alpha, image)
+    return _comfy_image(preview)
+
+
 def _output_root() -> Path:
     try:
         import folder_paths
@@ -324,13 +332,14 @@ class Sapiens2Segmentation:
 
     def segment(self, model, image, invert: bool = False, parts: str = ""):
         _require_task(model, "segmentation")
-        preview, _, labels, raw = Sapiens2DenseInference().run(model, image, overlay_opacity=0.5)
+        _, _, labels, raw = Sapiens2DenseInference().run(model, image, overlay_opacity=0.5)
         class_ids = raw["class_ids"].detach().cpu().long()
         selected = _selected_parts(parts)
         part_ids = selected if selected is not None else list(range(1, SEG_CLASS_COUNT))
+        merged_mask = _merge_parts(class_ids, part_ids, invert)
         return (
-            _comfy_image(preview),
-            _merge_parts(class_ids, part_ids, invert),
+            _mask_preview(image, merged_mask),
+            merged_mask,
             _part_masks(class_ids, part_ids),
             {"class_ids": class_ids, "parts": SEG_PARTS, "groups": SEG_GROUPS},
         )
