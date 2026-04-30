@@ -26,6 +26,8 @@ After pip finishes, `install.py` imports the runtime packages listed in `require
 
 The official Sapiens2 project currently lists Python 3.12+ and PyTorch 2.7+ as its supported environment. These nodes do not force-install PyTorch, so keep the ComfyUI PyTorch build that matches your CUDA/MPS setup.
 
+`device = auto` prefers CUDA when available, otherwise CPU. It intentionally does not auto-select MPS because Sapiens2 segmentation can produce visibly incorrect label maps on MPS with some PyTorch builds. You can still choose `mps` in `Sapiens2 Model Advanced` if you want to test it explicitly.
+
 ### PyTorch / CUDA Safety Notes
 
 Do not install the upstream Sapiens2 `requirements.txt` directly into your ComfyUI venv. It may request a different PyTorch stack than the one ComfyUI is already using.
@@ -58,7 +60,7 @@ Use one node for every task:
 
 - `Sapiens2 Model`
 
-Pick `task` and `model_size`. The node first checks the local cache under `ComfyUI/models/sapiens2/<task>/`; if the file is missing, it downloads the matching Hugging Face checkpoint. Dense tasks are loaded through the official Sapiens2 config files and `init_model()` path. The `load_info` output tells you exactly where the checkpoint, config, and, for pose, detector were loaded from.
+Pick `task`, `model_size`, and `device`. The node first checks the local cache under `ComfyUI/models/sapiens2/<task>/`; if the file is missing, it downloads the matching Hugging Face checkpoint. Dense tasks are loaded through the official Sapiens2 config files and `init_model()` path. The `load_info` output tells you exactly where the checkpoint, config, and, for pose, detector were loaded from.
 
 Use `Sapiens2 Model Advanced` if you need `source = local_only`, `source = download`, custom `repo_id`, `filename`, `checkpoint_path`, `revision`, `token`, `device`, `dtype`, or pose detector paths.
 
@@ -80,7 +82,7 @@ If you only need a mask or channel, connect the same `model` and `IMAGE` directl
 
 Easy nodes keep the first run short:
 
-- `Sapiens2 Model`: choose only task and model size. Missing checkpoints are downloaded, cached checkpoints are reused.
+- `Sapiens2 Model`: choose task, model size, and device. Missing checkpoints are downloaded, cached checkpoints are reused.
 - `Sapiens2 Run`: run the loaded model with default visualization settings.
 - `Sapiens2 Segmentation`: run body segmentation and return `masks`, `merged_mask`, `segm`, and `preview`.
 
@@ -131,7 +133,7 @@ Downloaded files are saved under `ComfyUI/models/sapiens2/<task>/` by default. P
 
 ## Design Notes
 
-Default settings favor the easiest working path: local cache first, download only when missing, automatic device/dtype selection, built-in Hugging Face repo mapping, and pose detector resolution inside the same model node.
+Default settings favor the easiest working path: local cache first, download only when missing, CUDA-then-CPU automatic device selection, built-in Hugging Face repo mapping, and pose detector resolution inside the same model node.
 
 When you need more control, expose the optional inputs and override only the field you need. The code keeps those advanced paths separate from the common path so basic workflows stay short.
 
