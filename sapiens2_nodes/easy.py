@@ -1135,6 +1135,8 @@ class Sapiens2Pointmap:
             _point_quality_max_points(image, quality),
             0.0,
             30000,
+            2,
+            0.25,
         )
         return {
             "ui": {"3d": ui_entries},

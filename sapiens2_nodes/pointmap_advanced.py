@@ -146,6 +146,31 @@ def _valid_depth_mask(
     return valid
 
 
+def _smooth_pointmap_surface(
+    xyz: torch.Tensor,
+    valid: torch.Tensor,
+    iterations: int,
+    strength: float,
+) -> torch.Tensor:
+    iterations = max(0, int(iterations))
+    strength = float(max(0.0, min(1.0, strength)))
+    if iterations == 0 or strength <= 0.0 or not bool(valid.any().item()):
+        return xyz
+
+    xyz_chw = xyz.movedim(-1, 0).clone()
+    kernel = torch.ones((1, 1, 3, 3), dtype=xyz_chw.dtype, device=xyz_chw.device)
+
+    for _ in range(iterations):
+        weights = valid.to(dtype=xyz_chw.dtype).unsqueeze(0).unsqueeze(0)
+        weighted_xyz = xyz_chw.unsqueeze(0) * weights
+        neighbor_sum = F.conv2d(weighted_xyz, kernel.expand(3, 1, 3, 3), padding=1, groups=3).squeeze(0)
+        neighbor_count = F.conv2d(weights, kernel, padding=1).squeeze(0).squeeze(0).clamp(min=1.0)
+        averaged = neighbor_sum / neighbor_count
+        xyz_chw[:, valid] = xyz_chw[:, valid] * (1.0 - strength) + averaged[:, valid] * strength
+
+    return xyz_chw.movedim(0, -1).contiguous()
+
+
 def _mesh_from_pointmap(
     pointmap: torch.Tensor,
     image: torch.Tensor,
@@ -160,6 +185,8 @@ def _mesh_from_pointmap(
     depth_scale: float,
     xy_scale: float,
     depth_bias: float,
+    mesh_smooth_iterations: int,
+    mesh_smooth_strength: float,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     mesh_stride = max(1, int(mesh_stride))
     adjusted = _adjust_pointmap_geometry(pointmap, depth_scale=depth_scale, xy_scale=xy_scale, depth_bias=depth_bias)
@@ -167,6 +194,7 @@ def _mesh_from_pointmap(
     xyz = adjusted.movedim(0, -1)[::mesh_stride, ::mesh_stride].contiguous()
     sampled_mask = mask[::mesh_stride, ::mesh_stride] if mask is not None else None
     valid = _valid_depth_mask(xyz, sampled_mask, rtol, min_depth, max_depth)
+    xyz = _smooth_pointmap_surface(xyz, valid, mesh_smooth_iterations, mesh_smooth_strength)
     mesh_height, mesh_width = valid.shape
 
     rows = torch.arange(mesh_height - 1).view(-1, 1).expand(-1, mesh_width - 1)
@@ -253,6 +281,8 @@ def _export_pointmap_models(
     max_points: int,
     splat_size: float,
     splat_max_points: int,
+    mesh_smooth_iterations: int = 0,
+    mesh_smooth_strength: float = 0.0,
 ) -> tuple[list[Path], list[dict[str, str]]]:
     pointmaps = _coerce_pointmap_batch(pointmap)
     images = _comfy_image(image)
@@ -297,6 +327,8 @@ def _export_pointmap_models(
             depth_scale,
             xy_scale,
             depth_bias,
+            mesh_smooth_iterations,
+            mesh_smooth_strength,
         )
         path = _output_path(filename_prefix, index)
         _save_textured_glb(vertices, uvs, faces, texture, path)
@@ -329,6 +361,8 @@ class Sapiens2PointmapMeshAdvanced:
                 "max_points": ("INT", {"default": 60000, "min": 1000, "step": 1000}),
                 "splat_size": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.001}),
                 "splat_max_points": ("INT", {"default": 30000, "min": 1000, "max": 100000, "step": 1000}),
+                "mesh_smooth_iterations": ("INT", {"default": 2, "min": 0, "max": 16, "step": 1}),
+                "mesh_smooth_strength": ("FLOAT", {"default": 0.25, "min": 0.0, "max": 1.0, "step": 0.01}),
             },
             "optional": {"mask": ("MASK",)},
         }
@@ -358,6 +392,8 @@ class Sapiens2PointmapMeshAdvanced:
         max_points: int = 60000,
         splat_size: float = 0.0,
         splat_max_points: int = 30000,
+        mesh_smooth_iterations: int = 2,
+        mesh_smooth_strength: float = 0.25,
         mask=None,
     ):
         _require_task(model, "pointmap")
@@ -381,6 +417,8 @@ class Sapiens2PointmapMeshAdvanced:
             max_points,
             splat_size,
             splat_max_points,
+            mesh_smooth_iterations,
+            mesh_smooth_strength,
         )
 
         first_path = str(paths[0]) if paths else ""
