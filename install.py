@@ -137,7 +137,7 @@ def install_requirements(no_deps: bool = False, allow_torch_install: bool = Fals
         if not allow_torch_install:
             raise RuntimeError(
                 "No existing torch package was detected. Install the correct ComfyUI "
-                "PyTorch/CUDA/MPS build first, then rerun install.py --install-deps. "
+                "PyTorch/CUDA/MPS build first, then rerun install.py. "
                 "Use --allow-torch-install only if you intentionally want pip to choose torch."
             )
         print("No existing torch package was detected. pip may install torch as a dependency.")
@@ -193,12 +193,17 @@ def main():
     parser.add_argument(
         "--install-deps",
         action="store_true",
-        help="Install this node's Python requirements while pinning the current torch/CUDA/xformers stack.",
+        help="Compatibility flag. Dependencies are installed by default unless --skip-deps is used.",
+    )
+    parser.add_argument(
+        "--skip-deps",
+        action="store_true",
+        help="Skip pip dependency installation and only clone the official Sapiens2 repo.",
     )
     parser.add_argument(
         "--no-deps",
         action="store_true",
-        help="Pass --no-deps to pip when used with --install-deps. Useful if ComfyUI already has the needed packages.",
+        help="Pass --no-deps to pip while installing this node's direct requirements.",
     )
     parser.add_argument(
         "--skip-clone",
@@ -213,9 +218,12 @@ def main():
     args = parser.parse_args()
 
     if args.install_deps:
+        print("--install-deps is no longer required; dependencies install by default.")
+
+    if not args.skip_deps:
         install_requirements(no_deps=args.no_deps, allow_torch_install=args.allow_torch_install)
     else:
-        print("Skipping pip dependency install. Use --install-deps to install requirements safely.")
+        print("Skipping pip dependency install because --skip-deps was passed.")
 
     if not args.skip_clone:
         clone_sapiens2()
