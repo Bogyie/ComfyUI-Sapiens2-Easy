@@ -162,14 +162,14 @@ Inputs:
 - `model`: pointmap model
 - `image`: input image
 - `preview_mode`: `result`, `overlay`, `side_by_side`, `source`
-- `include_background_plane`: add a masked original-image plane slightly behind the point cloud in the output GLB
+- `camera_lens`: `default`, `wide`, or `telephoto`. `wide` compresses Z depth for wide-angle images that look too deep; `telephoto` expands Z depth for flatter telephoto images.
 - `render_as_splats`: export small camera-facing quads instead of raw points to reduce holes during rotated captures
 - `mask`: optional mask
 
 Outputs:
 
 - `preview`: pointmap/depth-style preview using the selected preview mode
-- `pointmap_glb`: generated `.glb` path list, also shown in ComfyUI's 3D preview UI when available. The point cloud honors the optional input mask, is centered around its bounding box, and is oriented for GLB viewers. The basic node uses `masked` background plane mode with offset `0.05` when background export is enabled.
+- `pointmap_glb`: generated `.glb` path list, also shown in ComfyUI's 3D preview UI when available. The point cloud honors the optional input mask, is centered around its bounding box, and is oriented for GLB viewers.
 
 ### Sapiens2 Pointmap Mesh Advanced
 
@@ -188,9 +188,9 @@ Inputs:
 - `center_mesh`: center vertices around their bounding box
 - `flip_y`: flip the vertical axis for a conventional GLB Y-up view
 - `flip_z`: flip the depth axis for conventional GLB front/back orientation
-- `include_background_plane`: add a flat original-image plane behind the mesh in the output GLB
-- `background_plane`: `masked` keeps the object mask transparent, `full_image` keeps the full source image
-- `background_offset`: distance behind the farthest Z point
+- `depth_scale`: scale Z depth before mesh or splat export. Values below `1.0` reduce exaggerated wide-angle depth.
+- `xy_scale`: scale X/Y before export
+- `depth_bias`: add a constant Z offset before export
 - `splat_size`: splat quad size in scene units. `0` uses automatic sizing.
 - `splat_max_points`: point budget used when `render_mode` is `splats`
 - `mask`: optional foreground mask

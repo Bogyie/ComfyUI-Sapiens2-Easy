@@ -1,7 +1,7 @@
 [project]
 name = "comfyui-sapiens2-easy"
 description = "Easy ComfyUI custom nodes for Meta Sapiens2 segmentation, normal, pointmap, and pose workflows."
-version = "1.0.4"
+version = "1.1.0"
 license = { file = "LICENSE.md" }
 readme = "README.md"
 dependencies = [

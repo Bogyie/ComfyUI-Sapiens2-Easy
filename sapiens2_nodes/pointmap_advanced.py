@@ -7,11 +7,10 @@ import torch
 import torch.nn.functional as F
 
 from .easy import (
-    BACKGROUND_PLANE_MODES,
-    _background_plane_from_pointmap,
     _comfy_image,
     _comfy_mask,
     _format_preview,
+    _adjust_pointmap_geometry,
     _orient_pointmap_vertices,
     _png_bytes,
     _pointmap_center_offset,
@@ -33,7 +32,6 @@ def _save_textured_glb(
     faces: np.ndarray,
     texture_rgb: np.ndarray,
     path: Path,
-    background: dict[str, np.ndarray] | None = None,
 ) -> None:
     vertices = np.ascontiguousarray(vertices, dtype=np.float32)
     uvs = np.ascontiguousarray(uvs, dtype=np.float32)
@@ -103,52 +101,6 @@ def _save_textured_glb(
         "scene": 0,
     }
 
-    if background is not None:
-        bg_vertices = np.ascontiguousarray(background["vertices"], dtype=np.float32)
-        bg_uvs = np.ascontiguousarray(background["uvs"], dtype=np.float32)
-        bg_faces = np.ascontiguousarray(background["faces"], dtype=np.uint32)
-        bg_vertex_view = add_buffer_view(bg_vertices.tobytes(), 34962)
-        bg_uv_view = add_buffer_view(bg_uvs.tobytes(), 34962)
-        bg_face_view = add_buffer_view(bg_faces.tobytes(), 34963)
-        bg_image_view = add_buffer_view(_png_bytes(background["texture"]))
-        bg_pos_accessor = len(gltf["accessors"])
-        gltf["accessors"].extend(
-            [
-                {
-                    "bufferView": bg_vertex_view,
-                    "componentType": 5126,
-                    "count": int(bg_vertices.shape[0]),
-                    "type": "VEC3",
-                    "min": bg_vertices.min(axis=0).tolist(),
-                    "max": bg_vertices.max(axis=0).tolist(),
-                },
-                {"bufferView": bg_uv_view, "componentType": 5126, "count": int(bg_uvs.shape[0]), "type": "VEC2"},
-                {"bufferView": bg_face_view, "componentType": 5125, "count": int(bg_faces.size), "type": "SCALAR"},
-            ]
-        )
-        gltf["images"].append({"bufferView": bg_image_view, "mimeType": "image/png"})
-        gltf["textures"].append({"sampler": 0, "source": len(gltf["images"]) - 1})
-        material = {
-            "pbrMetallicRoughness": {
-                "baseColorTexture": {"index": len(gltf["textures"]) - 1},
-                "metallicFactor": 0.0,
-                "roughnessFactor": 1.0,
-            },
-            "doubleSided": True,
-        }
-        if background.get("alpha_mode") == "MASK":
-            material["alphaMode"] = "MASK"
-            material["alphaCutoff"] = 0.5
-        gltf["materials"].append(material)
-        gltf["meshes"][0]["primitives"].append(
-            {
-                "attributes": {"POSITION": bg_pos_accessor, "TEXCOORD_0": bg_pos_accessor + 1},
-                "indices": bg_pos_accessor + 2,
-                "material": len(gltf["materials"]) - 1,
-                "mode": 4,
-            }
-        )
-
     buffer = b"".join(_pad4(part) for part in buffer_parts)
     gltf["buffers"] = [{"byteLength": len(buffer)}]
     json_bytes = _pad4(json.dumps(gltf, separators=(",", ":")).encode("utf-8"), b" ")
@@ -205,10 +157,14 @@ def _mesh_from_pointmap(
     center_mesh: bool,
     flip_y: bool,
     flip_z: bool,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, torch.Tensor | None]:
+    depth_scale: float,
+    xy_scale: float,
+    depth_bias: float,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     mesh_stride = max(1, int(mesh_stride))
-    _, height, width = pointmap.shape
-    xyz = pointmap.detach().cpu().float().movedim(0, -1)[::mesh_stride, ::mesh_stride].contiguous()
+    adjusted = _adjust_pointmap_geometry(pointmap, depth_scale=depth_scale, xy_scale=xy_scale, depth_bias=depth_bias)
+    _, height, width = adjusted.shape
+    xyz = adjusted.movedim(0, -1)[::mesh_stride, ::mesh_stride].contiguous()
     sampled_mask = mask[::mesh_stride, ::mesh_stride] if mask is not None else None
     valid = _valid_depth_mask(xyz, sampled_mask, rtol, min_depth, max_depth)
     mesh_height, mesh_width = valid.shape
@@ -247,7 +203,7 @@ def _mesh_from_pointmap(
 
     texture = _comfy_image(image)[0, :, :, :3]
     texture = (texture.detach().cpu().clamp(0, 1).numpy() * 255.0).round().astype(np.uint8)
-    return vertices.numpy(), uvs.numpy(), faces.numpy(), texture, center_offset
+    return vertices.numpy(), uvs.numpy(), faces.numpy(), texture
 
 
 def _output_path(filename_prefix: str, index: int) -> Path:
@@ -279,9 +235,9 @@ class Sapiens2PointmapMeshAdvanced:
                 "center_mesh": ("BOOLEAN", {"default": True}),
                 "flip_y": ("BOOLEAN", {"default": True}),
                 "flip_z": ("BOOLEAN", {"default": True}),
-                "include_background_plane": ("BOOLEAN", {"default": False}),
-                "background_plane": (BACKGROUND_PLANE_MODES, {"default": "masked"}),
-                "background_offset": ("FLOAT", {"default": 0.05, "min": 0.0, "max": 10.0, "step": 0.01}),
+                "depth_scale": ("FLOAT", {"default": 1.0, "min": 0.1, "max": 3.0, "step": 0.01}),
+                "xy_scale": ("FLOAT", {"default": 1.0, "min": 0.1, "max": 3.0, "step": 0.01}),
+                "depth_bias": ("FLOAT", {"default": 0.0, "min": -10.0, "max": 10.0, "step": 0.01}),
                 "splat_size": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.001}),
                 "splat_max_points": ("INT", {"default": 30000, "min": 1000, "max": 100000, "step": 1000}),
             },
@@ -307,9 +263,9 @@ class Sapiens2PointmapMeshAdvanced:
         center_mesh: bool = True,
         flip_y: bool = True,
         flip_z: bool = True,
-        include_background_plane: bool = False,
-        background_plane: str = "masked",
-        background_offset: float = 0.05,
+        depth_scale: float = 1.0,
+        xy_scale: float = 1.0,
+        depth_bias: float = 0.0,
         splat_size: float = 0.0,
         splat_max_points: int = 30000,
         mask=None,
@@ -332,11 +288,11 @@ class Sapiens2PointmapMeshAdvanced:
                         image_i,
                         mask=mask,
                         mask_index=index,
-                        include_background_plane=include_background_plane,
-                        background_plane=background_plane,
-                        background_offset=background_offset,
                         render_as_splats=True,
                         splat_size=splat_size,
+                        depth_scale=depth_scale,
+                        xy_scale=xy_scale,
+                        depth_bias=depth_bias,
                         max_points=splat_max_points,
                         filename_prefix=filename_prefix,
                     )
@@ -345,7 +301,7 @@ class Sapiens2PointmapMeshAdvanced:
                 ui_entries.append(_ui_3d_entry(path))
                 continue
 
-            vertices, uvs, faces, texture, center_offset = _mesh_from_pointmap(
+            vertices, uvs, faces, texture = _mesh_from_pointmap(
                 pointmaps[index],
                 image_i,
                 mask_i,
@@ -356,25 +312,12 @@ class Sapiens2PointmapMeshAdvanced:
                 center_mesh,
                 flip_y,
                 flip_z,
-            )
-            background = (
-                _background_plane_from_pointmap(
-                    pointmaps[index],
-                    image_i,
-                    mask_i,
-                    torch.from_numpy(vertices),
-                    center_offset,
-                    center_mesh,
-                    flip_y,
-                    flip_z,
-                    background_offset,
-                    background_plane,
-                )
-                if include_background_plane
-                else None
+                depth_scale,
+                xy_scale,
+                depth_bias,
             )
             path = _output_path(filename_prefix, index)
-            _save_textured_glb(vertices, uvs, faces, texture, path, background=background)
+            _save_textured_glb(vertices, uvs, faces, texture, path)
             paths.append(path)
             ui_entries.append(_ui_3d_entry(path))
 
