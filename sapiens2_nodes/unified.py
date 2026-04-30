@@ -262,6 +262,7 @@ class Sapiens2LoadModel:
             "required": {
                 "task": (TASK_CHOICES,),
                 "model_size": (MODEL_SIZE_CHOICES, {"default": "1b"}),
+                "device": (DEVICES, {"default": "auto"}),
             }
         }
 
@@ -270,8 +271,8 @@ class Sapiens2LoadModel:
     FUNCTION = "load"
     CATEGORY = "Sapiens2/Easy"
 
-    def load(self, task: str, model_size: str):
-        return Sapiens2LoadModelAdvanced().load(task=task, model_size=model_size)
+    def load(self, task: str, model_size: str, device: str = "auto"):
+        return Sapiens2LoadModelAdvanced().load(task=task, model_size=model_size, device=device)
 
 
 class Sapiens2RunAdvanced:
