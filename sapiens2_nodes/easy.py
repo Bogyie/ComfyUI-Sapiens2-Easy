@@ -1087,8 +1087,8 @@ class Sapiens2Pointmap:
             "optional": {"mask": ("MASK",)},
         }
 
-    RETURN_TYPES = ("IMAGE", "STRING")
-    RETURN_NAMES = ("preview", "pointmap_glb")
+    RETURN_TYPES = ("IMAGE", "STRING", "SAPIENS2_POINTMAP")
+    RETURN_NAMES = ("preview", "pointmap_glb", "pointmap")
     FUNCTION = "run"
     CATEGORY = "Sapiens2"
 
@@ -1120,7 +1120,11 @@ class Sapiens2Pointmap:
             )
             glb_paths.append(glb_path)
             ui_entries.append(_ui_3d_entry(glb_path))
-        return {"ui": {"3d": ui_entries}, "result": (_format_preview(image, preview, preview_mode), "\n".join(glb_paths))}
+        pointmap_result = {"pointmap": pointmaps, "preview": preview}
+        return {
+            "ui": {"3d": ui_entries},
+            "result": (_format_preview(image, preview, preview_mode), "\n".join(glb_paths), pointmap_result),
+        }
 
 
 class Sapiens2Pose:

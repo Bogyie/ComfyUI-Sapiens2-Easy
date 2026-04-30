@@ -146,6 +146,79 @@ def _valid_depth_mask(
     return valid
 
 
+def _fillable_region(
+    xyz: torch.Tensor,
+    mask: torch.Tensor | None,
+    min_depth: float,
+    max_depth: float,
+) -> torch.Tensor:
+    depth = xyz[..., 2]
+    region = torch.isfinite(xyz).all(dim=-1) & torch.isfinite(depth)
+    region &= (depth > float(min_depth)) & (depth < float(max_depth))
+    if mask is not None:
+        region &= mask
+    return region
+
+
+def _fill_pointmap_holes(
+    xyz: torch.Tensor,
+    valid: torch.Tensor,
+    fillable: torch.Tensor,
+    iterations: int,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    iterations = max(0, int(iterations))
+    if iterations == 0 or not bool((fillable & ~valid).any().item()):
+        return xyz, valid
+
+    xyz_chw = xyz.movedim(-1, 0).clone()
+    valid = valid.clone()
+    kernel = torch.ones((1, 1, 3, 3), dtype=xyz_chw.dtype, device=xyz_chw.device)
+    kernel[:, :, 1, 1] = 0.0
+
+    for _ in range(iterations):
+        missing = fillable & ~valid
+        if not bool(missing.any().item()):
+            break
+
+        weights = valid.to(dtype=xyz_chw.dtype).unsqueeze(0).unsqueeze(0)
+        weighted_xyz = xyz_chw.unsqueeze(0) * weights
+        neighbor_sum = F.conv2d(weighted_xyz, kernel.expand(3, 1, 3, 3), padding=1, groups=3).squeeze(0)
+        neighbor_count = F.conv2d(weights, kernel, padding=1).squeeze(0).squeeze(0)
+        can_fill = missing & (neighbor_count >= 5.0)
+        if not bool(can_fill.any().item()):
+            break
+
+        xyz_chw[:, can_fill] = neighbor_sum[:, can_fill] / neighbor_count[can_fill].clamp(min=1.0)
+        valid |= can_fill
+
+    return xyz_chw.movedim(0, -1).contiguous(), valid
+
+
+def _smooth_pointmap_surface(
+    xyz: torch.Tensor,
+    valid: torch.Tensor,
+    iterations: int,
+    strength: float,
+) -> torch.Tensor:
+    iterations = max(0, int(iterations))
+    strength = float(max(0.0, min(1.0, strength)))
+    if iterations == 0 or strength <= 0.0 or not bool(valid.any().item()):
+        return xyz
+
+    xyz_chw = xyz.movedim(-1, 0).clone()
+    kernel = torch.ones((1, 1, 3, 3), dtype=xyz_chw.dtype, device=xyz_chw.device)
+
+    for _ in range(iterations):
+        weights = valid.to(dtype=xyz_chw.dtype).unsqueeze(0).unsqueeze(0)
+        weighted_xyz = xyz_chw.unsqueeze(0) * weights
+        neighbor_sum = F.conv2d(weighted_xyz, kernel.expand(3, 1, 3, 3), padding=1, groups=3).squeeze(0)
+        neighbor_count = F.conv2d(weights, kernel, padding=1).squeeze(0).squeeze(0).clamp(min=1.0)
+        averaged = neighbor_sum / neighbor_count
+        xyz_chw[:, valid] = xyz_chw[:, valid] * (1.0 - strength) + averaged[:, valid] * strength
+
+    return xyz_chw.movedim(0, -1).contiguous()
+
+
 def _mesh_from_pointmap(
     pointmap: torch.Tensor,
     image: torch.Tensor,
@@ -160,6 +233,10 @@ def _mesh_from_pointmap(
     depth_scale: float,
     xy_scale: float,
     depth_bias: float,
+    fill_holes: bool,
+    fill_iterations: int,
+    smooth_iterations: int,
+    smooth_strength: float,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     mesh_stride = max(1, int(mesh_stride))
     adjusted = _adjust_pointmap_geometry(pointmap, depth_scale=depth_scale, xy_scale=xy_scale, depth_bias=depth_bias)
@@ -167,6 +244,10 @@ def _mesh_from_pointmap(
     xyz = adjusted.movedim(0, -1)[::mesh_stride, ::mesh_stride].contiguous()
     sampled_mask = mask[::mesh_stride, ::mesh_stride] if mask is not None else None
     valid = _valid_depth_mask(xyz, sampled_mask, rtol, min_depth, max_depth)
+    if fill_holes:
+        fillable = _fillable_region(xyz, sampled_mask, min_depth, max_depth)
+        xyz, valid = _fill_pointmap_holes(xyz, valid, fillable, fill_iterations)
+    xyz = _smooth_pointmap_surface(xyz, valid, smooth_iterations, smooth_strength)
     mesh_height, mesh_width = valid.shape
 
     rows = torch.arange(mesh_height - 1).view(-1, 1).expand(-1, mesh_width - 1)
@@ -218,6 +299,186 @@ def _output_path(filename_prefix: str, index: int) -> Path:
     raise FileExistsError("Could not create a unique pointmap mesh GLB path.")
 
 
+def _coerce_pointmap_batch(pointmap) -> torch.Tensor:
+    if isinstance(pointmap, dict):
+        if "pointmap" not in pointmap:
+            raise ValueError("SAPIENS2_POINTMAP data is missing the 'pointmap' tensor.")
+        pointmap = pointmap["pointmap"]
+    if not isinstance(pointmap, torch.Tensor):
+        raise TypeError("pointmap must be a SAPIENS2_POINTMAP object or torch.Tensor.")
+
+    pointmaps = pointmap.detach().cpu().float()
+    if pointmaps.ndim == 3:
+        pointmaps = pointmaps.unsqueeze(0)
+    if pointmaps.ndim != 4 or pointmaps.shape[1] != 3:
+        raise ValueError(f"Expected pointmap shape [B, 3, H, W], got {tuple(pointmaps.shape)}.")
+    return pointmaps
+
+
+def _export_pointmap_models(
+    pointmap,
+    image,
+    mask,
+    render_mode: str,
+    filename_prefix: str,
+    mesh_stride: int,
+    rtol: float,
+    min_depth: float,
+    max_depth: float,
+    center_mesh: bool,
+    flip_y: bool,
+    flip_z: bool,
+    depth_scale: float,
+    xy_scale: float,
+    depth_bias: float,
+    fill_holes: bool,
+    fill_iterations: int,
+    smooth_iterations: int,
+    smooth_strength: float,
+    splat_size: float,
+    splat_max_points: int,
+) -> tuple[list[Path], list[dict[str, str]]]:
+    pointmaps = _coerce_pointmap_batch(pointmap)
+    images = _comfy_image(image)
+    masks = _prepare_mask(mask, pointmaps.shape[0], pointmaps.shape[-2], pointmaps.shape[-1])
+
+    paths: list[Path] = []
+    ui_entries = []
+    for index in range(pointmaps.shape[0]):
+        mask_i = masks[index] if masks is not None else None
+        image_i = images[min(index, images.shape[0] - 1)].unsqueeze(0)
+        if render_mode == "splats":
+            path = Path(
+                _write_pointmap_glb(
+                    pointmaps[index],
+                    image_i,
+                    mask=mask,
+                    mask_index=index,
+                    render_as_splats=True,
+                    splat_size=splat_size,
+                    depth_scale=depth_scale,
+                    xy_scale=xy_scale,
+                    depth_bias=depth_bias,
+                    max_points=splat_max_points,
+                    filename_prefix=filename_prefix,
+                )
+            )
+            paths.append(path)
+            ui_entries.append(_ui_3d_entry(path))
+            continue
+
+        vertices, uvs, faces, texture = _mesh_from_pointmap(
+            pointmaps[index],
+            image_i,
+            mask_i,
+            rtol,
+            min_depth,
+            max_depth,
+            mesh_stride,
+            center_mesh,
+            flip_y,
+            flip_z,
+            depth_scale,
+            xy_scale,
+            depth_bias,
+            fill_holes,
+            fill_iterations,
+            smooth_iterations,
+            smooth_strength,
+        )
+        path = _output_path(filename_prefix, index)
+        _save_textured_glb(vertices, uvs, faces, texture, path)
+        paths.append(path)
+        ui_entries.append(_ui_3d_entry(path))
+
+    return paths, ui_entries
+
+
+class Sapiens2PointmapToMesh:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "pointmap": ("SAPIENS2_POINTMAP",),
+                "image": ("IMAGE",),
+                "render_mode": (("mesh", "splats"), {"default": "mesh"}),
+                "filename_prefix": ("STRING", {"default": "sapiens2_pointmap_mesh"}),
+                "mesh_stride": ("INT", {"default": 2, "min": 1, "max": 16, "step": 1}),
+                "rtol": ("FLOAT", {"default": 0.04, "min": 0.001, "max": 1.0, "step": 0.001}),
+                "min_depth": ("FLOAT", {"default": 0.05, "min": 0.0, "max": 100.0, "step": 0.01}),
+                "max_depth": ("FLOAT", {"default": 25.0, "min": 0.01, "max": 1000.0, "step": 0.1}),
+                "center_mesh": ("BOOLEAN", {"default": True}),
+                "flip_y": ("BOOLEAN", {"default": True}),
+                "flip_z": ("BOOLEAN", {"default": True}),
+                "depth_scale": ("FLOAT", {"default": 1.0, "min": 0.1, "max": 3.0, "step": 0.01}),
+                "xy_scale": ("FLOAT", {"default": 1.0, "min": 0.1, "max": 3.0, "step": 0.01}),
+                "depth_bias": ("FLOAT", {"default": 0.0, "min": -10.0, "max": 10.0, "step": 0.01}),
+                "fill_holes": ("BOOLEAN", {"default": True}),
+                "fill_iterations": ("INT", {"default": 2, "min": 0, "max": 16, "step": 1}),
+                "smooth_iterations": ("INT", {"default": 0, "min": 0, "max": 16, "step": 1}),
+                "smooth_strength": ("FLOAT", {"default": 0.35, "min": 0.0, "max": 1.0, "step": 0.01}),
+                "splat_size": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.001}),
+                "splat_max_points": ("INT", {"default": 30000, "min": 1000, "max": 100000, "step": 1000}),
+            },
+            "optional": {"mask": ("MASK",)},
+        }
+
+    RETURN_TYPES = ("STRING", "STRING")
+    RETURN_NAMES = ("glb_paths", "model_3d")
+    FUNCTION = "run"
+    CATEGORY = "Sapiens2/Utilities"
+
+    def run(
+        self,
+        pointmap,
+        image,
+        render_mode: str = "mesh",
+        filename_prefix: str = "sapiens2_pointmap_mesh",
+        mesh_stride: int = 2,
+        rtol: float = 0.04,
+        min_depth: float = 0.05,
+        max_depth: float = 25.0,
+        center_mesh: bool = True,
+        flip_y: bool = True,
+        flip_z: bool = True,
+        depth_scale: float = 1.0,
+        xy_scale: float = 1.0,
+        depth_bias: float = 0.0,
+        fill_holes: bool = True,
+        fill_iterations: int = 2,
+        smooth_iterations: int = 0,
+        smooth_strength: float = 0.35,
+        splat_size: float = 0.0,
+        splat_max_points: int = 30000,
+        mask=None,
+    ):
+        paths, ui_entries = _export_pointmap_models(
+            pointmap,
+            image,
+            mask,
+            render_mode,
+            filename_prefix,
+            mesh_stride,
+            rtol,
+            min_depth,
+            max_depth,
+            center_mesh,
+            flip_y,
+            flip_z,
+            depth_scale,
+            xy_scale,
+            depth_bias,
+            fill_holes,
+            fill_iterations,
+            smooth_iterations,
+            smooth_strength,
+            splat_size,
+            splat_max_points,
+        )
+        first_path = str(paths[0]) if paths else ""
+        return {"ui": {"3d": ui_entries}, "result": ("\n".join(str(path) for path in paths), first_path)}
+
+
 class Sapiens2PointmapMeshAdvanced:
     @classmethod
     def INPUT_TYPES(cls):
@@ -238,6 +499,10 @@ class Sapiens2PointmapMeshAdvanced:
                 "depth_scale": ("FLOAT", {"default": 1.0, "min": 0.1, "max": 3.0, "step": 0.01}),
                 "xy_scale": ("FLOAT", {"default": 1.0, "min": 0.1, "max": 3.0, "step": 0.01}),
                 "depth_bias": ("FLOAT", {"default": 0.0, "min": -10.0, "max": 10.0, "step": 0.01}),
+                "fill_holes": ("BOOLEAN", {"default": True}),
+                "fill_iterations": ("INT", {"default": 2, "min": 0, "max": 16, "step": 1}),
+                "smooth_iterations": ("INT", {"default": 0, "min": 0, "max": 16, "step": 1}),
+                "smooth_strength": ("FLOAT", {"default": 0.35, "min": 0.0, "max": 1.0, "step": 0.01}),
                 "splat_size": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.001}),
                 "splat_max_points": ("INT", {"default": 30000, "min": 1000, "max": 100000, "step": 1000}),
             },
@@ -266,60 +531,39 @@ class Sapiens2PointmapMeshAdvanced:
         depth_scale: float = 1.0,
         xy_scale: float = 1.0,
         depth_bias: float = 0.0,
+        fill_holes: bool = True,
+        fill_iterations: int = 2,
+        smooth_iterations: int = 0,
+        smooth_strength: float = 0.35,
         splat_size: float = 0.0,
         splat_max_points: int = 30000,
         mask=None,
     ):
         _require_task(model, "pointmap")
         preview, _, _, raw = Sapiens2DenseInference().run(model, image, mask=mask)
-        pointmaps = raw["pointmap"].detach().cpu().float()
-        images = _comfy_image(image)
-        masks = _prepare_mask(mask, pointmaps.shape[0], pointmaps.shape[-2], pointmaps.shape[-1])
-
-        paths: list[Path] = []
-        ui_entries = []
-        for index in range(pointmaps.shape[0]):
-            mask_i = masks[index] if masks is not None else None
-            image_i = images[min(index, images.shape[0] - 1)].unsqueeze(0)
-            if render_mode == "splats":
-                path = Path(
-                    _write_pointmap_glb(
-                        pointmaps[index],
-                        image_i,
-                        mask=mask,
-                        mask_index=index,
-                        render_as_splats=True,
-                        splat_size=splat_size,
-                        depth_scale=depth_scale,
-                        xy_scale=xy_scale,
-                        depth_bias=depth_bias,
-                        max_points=splat_max_points,
-                        filename_prefix=filename_prefix,
-                    )
-                )
-                paths.append(path)
-                ui_entries.append(_ui_3d_entry(path))
-                continue
-
-            vertices, uvs, faces, texture = _mesh_from_pointmap(
-                pointmaps[index],
-                image_i,
-                mask_i,
-                rtol,
-                min_depth,
-                max_depth,
-                mesh_stride,
-                center_mesh,
-                flip_y,
-                flip_z,
-                depth_scale,
-                xy_scale,
-                depth_bias,
-            )
-            path = _output_path(filename_prefix, index)
-            _save_textured_glb(vertices, uvs, faces, texture, path)
-            paths.append(path)
-            ui_entries.append(_ui_3d_entry(path))
+        paths, ui_entries = _export_pointmap_models(
+            raw,
+            image,
+            mask,
+            render_mode,
+            filename_prefix,
+            mesh_stride,
+            rtol,
+            min_depth,
+            max_depth,
+            center_mesh,
+            flip_y,
+            flip_z,
+            depth_scale,
+            xy_scale,
+            depth_bias,
+            fill_holes,
+            fill_iterations,
+            smooth_iterations,
+            smooth_strength,
+            splat_size,
+            splat_max_points,
+        )
 
         first_path = str(paths[0]) if paths else ""
         result = (_format_preview(image, preview, preview_mode), "\n".join(str(path) for path in paths), first_path)

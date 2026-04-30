@@ -170,6 +170,33 @@ Outputs:
 
 - `preview`: pointmap/depth-style preview using the selected preview mode
 - `pointmap_glb`: generated `.glb` path list, also shown in ComfyUI's 3D preview UI when available. The point cloud honors the optional input mask, is centered around its bounding box, and is oriented for GLB viewers.
+- `pointmap`: raw pointmap data for utility nodes such as `Sapiens2 Pointmap To Mesh`
+
+### Sapiens2 Pointmap To Mesh
+
+Converts a `SAPIENS2_POINTMAP` output into a textured GLB mesh or splat GLB without running pointmap inference again. Use this after `Sapiens2 Pointmap` when you want to turn the visible point surface into a connected 3D model.
+
+Inputs:
+
+- `pointmap`: raw pointmap output from `Sapiens2 Pointmap`
+- `image`: source image used as the mesh texture
+- `render_mode`: `mesh` or `splats`
+- `filename_prefix`: output filename prefix
+- `mesh_stride`: mesh resolution step. `1` is highest detail, higher values are lighter.
+- `rtol`: 3x3 depth-jump tolerance for removing silhouette/edge triangles
+- `min_depth`, `max_depth`: valid Z range
+- `center_mesh`, `flip_y`, `flip_z`: GLB orientation controls
+- `depth_scale`, `xy_scale`, `depth_bias`: geometry scale/offset controls
+- `fill_holes`: fill small filtered gaps in the mesh by interpolating neighboring pointmap coordinates
+- `fill_iterations`: number of small-gap fill passes. Higher values can close more holes, but may bridge across sharp depth boundaries.
+- `smooth_iterations`, `smooth_strength`: optional surface smoothing after hole filling
+- `splat_size`, `splat_max_points`: splat export controls when `render_mode` is `splats`
+- `mask`: optional foreground mask
+
+Outputs:
+
+- `glb_paths`: generated `.glb` path list
+- `model_3d`: first generated `.glb` path, suitable for ComfyUI 3D preview nodes
 
 ### Sapiens2 Pointmap Mesh Advanced
 
@@ -191,9 +218,14 @@ Inputs:
 - `depth_scale`: scale Z depth before mesh or splat export. Values below `1.0` reduce exaggerated wide-angle depth.
 - `xy_scale`: scale X/Y before export
 - `depth_bias`: add a constant Z offset before export
+- `fill_holes`: fill small filtered gaps in the mesh by interpolating neighboring pointmap coordinates. This helps turn a sparse-looking point surface into a more continuous visible surface.
+- `fill_iterations`: number of small-gap fill passes. Higher values can close more holes, but may bridge across sharp depth boundaries.
+- `smooth_iterations`, `smooth_strength`: optional surface smoothing after hole filling.
 - `splat_size`: splat quad size in scene units. `0` uses automatic sizing.
 - `splat_max_points`: point budget used when `render_mode` is `splats`
 - `mask`: optional foreground mask
+
+Note: pointmap mesh export reconstructs the visible surface from a single image. It can connect and fill the front-facing pointmap, but it does not infer a true hidden backside or watertight full body/object volume.
 
 Outputs:
 
