@@ -314,6 +314,53 @@ def _background_plane_rgba(image: torch.Tensor, mask: torch.Tensor | None, mode:
     return (rgba.clamp(0, 1).numpy() * 255.0).round().astype(np.uint8)
 
 
+def _background_cutout_geometry(
+    corners: np.ndarray,
+    mask: torch.Tensor,
+    image_height: int,
+    image_width: int,
+    max_grid: int = 160,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    mask = mask.detach().cpu().float()
+    if mask.shape != (image_height, image_width):
+        mask = F.interpolate(mask.view(1, 1, *mask.shape), size=(image_height, image_width), mode="nearest").view(image_height, image_width)
+    scale = max(float(max(image_height, image_width)) / float(max_grid), 1.0)
+    grid_h = max(1, int(round(image_height / scale)))
+    grid_w = max(1, int(round(image_width / scale)))
+    grid_mask = F.interpolate(mask.view(1, 1, image_height, image_width), size=(grid_h, grid_w), mode="area").view(grid_h, grid_w)
+
+    top_left, top_right, bottom_right, bottom_left = [torch.from_numpy(corner).float() for corner in corners]
+    vertices = []
+    uvs = []
+    faces = []
+
+    def point(u: float, v: float) -> torch.Tensor:
+        top = top_left * (1.0 - u) + top_right * u
+        bottom = bottom_left * (1.0 - u) + bottom_right * u
+        return top * (1.0 - v) + bottom * v
+
+    for row in range(grid_h):
+        v0 = row / grid_h
+        v1 = (row + 1) / grid_h
+        for col in range(grid_w):
+            if float(grid_mask[row, col]) > 0.5:
+                continue
+            u0 = col / grid_w
+            u1 = (col + 1) / grid_w
+            base = len(vertices)
+            vertices.extend([point(u0, v0), point(u1, v0), point(u1, v1), point(u0, v1)])
+            uvs.extend([[u0, v0], [u1, v0], [u1, v1], [u0, v1]])
+            faces.extend([[base, base + 1, base + 2], [base, base + 2, base + 3]])
+
+    if not vertices:
+        return corners, np.asarray([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]], dtype=np.float32), np.empty((0, 3), dtype=np.uint32)
+    return (
+        torch.stack(vertices).numpy().astype(np.float32),
+        np.asarray(uvs, dtype=np.float32),
+        np.asarray(faces, dtype=np.uint32),
+    )
+
+
 def _fit_bbox_to_aspect(
     x_min: float,
     x_max: float,
@@ -405,17 +452,22 @@ def _background_plane_from_pointmap(
         ],
         dtype=torch.float32,
     )
-    vertices = (raw_vertices * axis - center_vec).numpy().astype(np.float32)
-    uvs = np.asarray([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]], dtype=np.float32)
+    corners = (raw_vertices * axis - center_vec).numpy().astype(np.float32)
+    image_shape = _comfy_image(image).shape
+    if mode == "masked" and mask is not None:
+        vertices, uvs, faces = _background_cutout_geometry(corners, mask, int(image_shape[1]), int(image_shape[2]))
+    else:
+        vertices = corners
+        uvs = np.asarray([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]], dtype=np.float32)
+        faces = np.asarray([[0, 1, 2], [0, 2, 3]], dtype=np.uint32)
     if not flip_y:
         uvs[:, 1] = 1.0 - uvs[:, 1]
-    faces = np.asarray([[0, 1, 2], [0, 2, 3]], dtype=np.uint32)
     return {
         "vertices": vertices,
         "uvs": uvs,
         "faces": faces,
-        "texture": _background_plane_rgba(image, mask, mode),
-        "alpha_mode": "MASK" if mode == "masked" and mask is not None else "OPAQUE",
+        "texture": _background_plane_rgba(image, None if mode == "masked" else mask, mode),
+        "alpha_mode": "OPAQUE",
     }
 
 
