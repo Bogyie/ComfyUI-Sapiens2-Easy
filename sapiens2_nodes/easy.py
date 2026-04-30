@@ -16,6 +16,8 @@ from .types import Sapiens2PoseModel
 
 
 TASKS = ("segmentation", "normal", "pointmap", "pose")
+MANUAL_MODEL_SIZE_CHOICES = ("auto",) + MODEL_SIZE_CHOICES
+PREVIEW_MODES = ("result", "overlay", "side_by_side", "source")
 SEG_GROUPS = {
     "Background": {"all": (0,)},
     "Apparel": {"all": (1,)},
@@ -86,6 +88,18 @@ def _detector() -> tuple[str, str]:
         return local_dir, "local_detector_cache"
     path, _ = download_sapiens2_pose_detector_from_hf(local_dir=local_dir)
     return path, "huggingface_detector_download"
+
+
+def _local_detector() -> str:
+    rtmdet = get_model_root() / "detector" / POSE_RTMDET_FILENAME
+    if rtmdet.is_file():
+        return str(rtmdet)
+    local_dir = get_model_root() / "detector" / POSE_DETECTOR_REPO.rsplit("/", 1)[-1]
+    if local_dir.exists():
+        return str(local_dir)
+    raise FileNotFoundError(
+        "detector_path is required for manual pose loading unless a default detector already exists locally."
+    )
 
 
 def _require_task(model: Any, task: str) -> None:
@@ -198,6 +212,23 @@ def _mask_preview(image: torch.Tensor, mask: torch.Tensor, alpha: float = 0.55) 
     color = torch.tensor([0.0, 1.0, 1.0], dtype=image.dtype).view(1, 1, 1, 3)
     preview = torch.where(mask.unsqueeze(-1) > 0, image * (1.0 - alpha) + color * alpha, image)
     return _comfy_image(preview)
+
+
+def _format_preview(source: torch.Tensor, result: torch.Tensor, mode: str, alpha: float = 0.5) -> torch.Tensor:
+    source = _comfy_image(source)[..., :3]
+    result = _comfy_image(result)
+    if result.shape[-1] == 1:
+        result = result.repeat(1, 1, 1, 3)
+    else:
+        result = result[..., :3]
+    mode = str(mode or "result")
+    if mode == "source":
+        return source
+    if mode == "overlay":
+        return (source * (1.0 - alpha) + result * alpha).clamp(0, 1)
+    if mode == "side_by_side":
+        return torch.cat((source, result), dim=2)
+    return result
 
 
 def _output_root() -> Path:
@@ -705,6 +736,61 @@ class Sapiens2ModelLoader:
         )
 
 
+class Sapiens2ModelLoaderManual:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "task": (TASKS,),
+                "checkpoint_path": ("STRING", {"default": ""}),
+                "model_size": (MANUAL_MODEL_SIZE_CHOICES, {"default": "auto"}),
+                "device": (DEVICES, {"default": "auto"}),
+            },
+            "optional": {
+                "detector_path": ("STRING", {"default": ""}),
+            },
+        }
+
+    RETURN_TYPES = ("SAPIENS2_MODEL",)
+    RETURN_NAMES = ("model",)
+    FUNCTION = "load"
+    CATEGORY = "Sapiens2"
+
+    def load(
+        self,
+        task: str,
+        checkpoint_path: str,
+        model_size: str = "auto",
+        device: str = "auto",
+        detector_path: str = "",
+    ):
+        checkpoint = str(checkpoint_path or "").strip()
+        if not checkpoint:
+            raise ValueError("checkpoint_path is required for Sapiens2 Manual Model Loader.")
+        if task == "pose":
+            detector = str(detector_path or "").strip()
+            if not detector:
+                detector = _local_detector()
+            return (
+                load_sapiens2_pose_model(
+                    checkpoint_path=checkpoint,
+                    detector_path=detector,
+                    model_size=model_size,
+                    device=device,
+                    dtype="auto",
+                ),
+            )
+        return (
+            load_sapiens2_model(
+                task=task,
+                arch="auto" if model_size == "auto" else _size_to_arch(model_size),
+                device=device,
+                dtype="auto",
+                checkpoint_path=checkpoint,
+            ),
+        )
+
+
 class Sapiens2Segmentation:
     @classmethod
     def INPUT_TYPES(cls):
@@ -743,7 +829,11 @@ class Sapiens2Normal:
     @classmethod
     def INPUT_TYPES(cls):
         return {
-            "required": {"model": ("SAPIENS2_MODEL",), "image": ("IMAGE",)},
+            "required": {
+                "model": ("SAPIENS2_MODEL",),
+                "image": ("IMAGE",),
+                "preview_mode": (PREVIEW_MODES, {"default": "result"}),
+            },
             "optional": {"mask": ("MASK",)},
         }
 
@@ -752,17 +842,21 @@ class Sapiens2Normal:
     FUNCTION = "run"
     CATEGORY = "Sapiens2"
 
-    def run(self, model, image, mask=None):
+    def run(self, model, image, preview_mode: str = "result", mask=None):
         _require_task(model, "normal")
         preview, _, _, _ = Sapiens2DenseInference().run(model, image, mask=mask)
-        return (_comfy_image(preview),)
+        return (_format_preview(image, preview, preview_mode),)
 
 
 class Sapiens2Pointmap:
     @classmethod
     def INPUT_TYPES(cls):
         return {
-            "required": {"model": ("SAPIENS2_MODEL",), "image": ("IMAGE",)},
+            "required": {
+                "model": ("SAPIENS2_MODEL",),
+                "image": ("IMAGE",),
+                "preview_mode": (PREVIEW_MODES, {"default": "result"}),
+            },
             "optional": {"mask": ("MASK",)},
         }
 
@@ -771,11 +865,11 @@ class Sapiens2Pointmap:
     FUNCTION = "run"
     CATEGORY = "Sapiens2"
 
-    def run(self, model, image, mask=None):
+    def run(self, model, image, preview_mode: str = "result", mask=None):
         _require_task(model, "pointmap")
         preview, _, _, raw = Sapiens2DenseInference().run(model, image, mask=mask)
         glb_path = _write_pointmap_glb(raw["pointmap"][0], image)
-        return (_comfy_image(preview), glb_path)
+        return (_format_preview(image, preview, preview_mode), glb_path)
 
 
 class Sapiens2Pose:

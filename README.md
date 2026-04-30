@@ -65,6 +65,22 @@ Outputs:
 
 - `model`: task-aware `SAPIENS2_MODEL`
 
+### Sapiens2 Manual Model Loader
+
+Loads a checkpoint from a path you provide. Use this when you manage model files yourself or cannot download through Hugging Face from the ComfyUI environment.
+
+Options:
+
+- `task`: `segmentation`, `normal`, `pointmap`, `pose`
+- `checkpoint_path`: local `.safetensors` or checkpoint path
+- `model_size`: `auto`, `0.4b`, `0.8b`, `1b`, `5b`
+- `device`: `auto`, `cuda`, `mps`, `cpu`
+- `detector_path`: optional pose detector path. If empty for pose, an already-downloaded default detector is used.
+
+Outputs:
+
+- `model`: task-aware `SAPIENS2_MODEL`
+
 ### Sapiens2 Segmentation
 
 Runs Sapiens2 body segmentation and returns Comfy-friendly mask outputs.
@@ -111,11 +127,12 @@ Inputs:
 
 - `model`: normal model
 - `image`: input image
+- `preview_mode`: `result`, `overlay`, `side_by_side`, `source`
 - `mask`: optional mask
 
 Outputs:
 
-- `normal_map`: normal visualization image
+- `normal_map`: normal visualization using the selected preview mode
 
 ### Sapiens2 Pointmap
 
@@ -125,11 +142,12 @@ Inputs:
 
 - `model`: pointmap model
 - `image`: input image
+- `preview_mode`: `result`, `overlay`, `side_by_side`, `source`
 - `mask`: optional mask
 
 Outputs:
 
-- `preview`: pointmap/depth-style preview
+- `preview`: pointmap/depth-style preview using the selected preview mode
 - `pointmap_glb`: generated `.glb` path
 
 ### Sapiens2 Pose
