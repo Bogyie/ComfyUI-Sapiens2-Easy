@@ -167,7 +167,7 @@ Inputs:
 Outputs:
 
 - `preview`: pointmap/depth-style preview using the selected preview mode
-- `pointmap_glb`: generated `.glb` path, also shown in ComfyUI's 3D preview UI when available. The point cloud is centered around its bounding box and vertically oriented for GLB viewers.
+- `pointmap_glb`: generated `.glb` path, also shown in ComfyUI's 3D preview UI when available. The point cloud honors the optional input mask, is centered around its bounding box, and is oriented for GLB viewers.
 
 ### Sapiens2 Pointmap Mesh Advanced
 
@@ -184,6 +184,7 @@ Inputs:
 - `min_depth`, `max_depth`: valid Z range
 - `center_mesh`: center vertices around their bounding box
 - `flip_y`: flip the vertical axis for a conventional GLB Y-up view
+- `flip_z`: flip the depth axis for conventional GLB front/back orientation
 - `mask`: optional foreground mask
 
 Outputs:

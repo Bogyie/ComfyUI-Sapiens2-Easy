@@ -5,6 +5,7 @@ from typing import Any
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 
 from .constants import DEVICES, MODEL_SIZE_CHOICES, POSE_DETECTOR_REPO, POSE_RTMDET_FILENAME, SEG_CLASS_COUNT, SEG_PARTS
 from .folders import get_model_root
@@ -268,7 +269,7 @@ def _orient_pointmap_vertices(
     vertices: torch.Tensor,
     center: bool = True,
     flip_y: bool = True,
-    flip_z: bool = False,
+    flip_z: bool = True,
 ) -> torch.Tensor:
     vertices = vertices.detach().cpu().float().clone()
     if vertices.numel() == 0:
@@ -283,10 +284,27 @@ def _orient_pointmap_vertices(
     return vertices.contiguous()
 
 
-def _write_pointmap_glb(pointmap: torch.Tensor, image: torch.Tensor, max_points: int = 60000) -> str:
+def _pointmap_export_mask(mask: torch.Tensor | None, height: int, width: int) -> torch.Tensor | None:
+    if mask is None:
+        return None
+    mask = _comfy_mask(mask)[0].detach().cpu().float()
+    if mask.shape != (height, width):
+        mask = F.interpolate(mask.view(1, 1, *mask.shape), size=(height, width), mode="nearest").view(height, width)
+    return mask > 0.5
+
+
+def _write_pointmap_glb(
+    pointmap: torch.Tensor,
+    image: torch.Tensor,
+    mask: torch.Tensor | None = None,
+    max_points: int = 60000,
+) -> str:
     points = pointmap.detach().cpu().float()
     image = _comfy_image(image)[0, :, :, :3]
+    export_mask = _pointmap_export_mask(mask, int(points.shape[1]), int(points.shape[2]))
     valid = torch.isfinite(points).all(dim=0) & (points[2] > 0)
+    if export_mask is not None:
+        valid &= export_mask
     count = int(valid.sum().item())
     path = _unique_path("pointmap", ".glb")
     if count == 0:
@@ -926,7 +944,7 @@ class Sapiens2Pointmap:
     def run(self, model, image, preview_mode: str = "result", mask=None):
         _require_task(model, "pointmap")
         preview, _, _, raw = Sapiens2DenseInference().run(model, image, mask=mask)
-        glb_path = _write_pointmap_glb(raw["pointmap"][0], image)
+        glb_path = _write_pointmap_glb(raw["pointmap"][0], image, mask=mask)
         return {"ui": {"3d": [_ui_3d_entry(glb_path)]}, "result": (_format_preview(image, preview, preview_mode), glb_path)}
 
 

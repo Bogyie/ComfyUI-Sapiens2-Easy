@@ -152,6 +152,7 @@ def _mesh_from_pointmap(
     mesh_stride: int,
     center_mesh: bool,
     flip_y: bool,
+    flip_z: bool,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     mesh_stride = max(1, int(mesh_stride))
     _, height, width = pointmap.shape
@@ -177,7 +178,7 @@ def _mesh_from_pointmap(
 
     used = torch.unique(triangles.reshape(-1))
     vertices = xyz.reshape(-1, 3)[used]
-    vertices = _orient_pointmap_vertices(vertices, center=center_mesh, flip_y=flip_y, flip_z=False)
+    vertices = _orient_pointmap_vertices(vertices, center=center_mesh, flip_y=flip_y, flip_z=flip_z)
 
     y_coords = torch.arange(0, height, mesh_stride, dtype=torch.float32)[:mesh_height] / max(height - 1, 1)
     x_coords = torch.arange(0, width, mesh_stride, dtype=torch.float32)[:mesh_width] / max(width - 1, 1)
@@ -217,6 +218,7 @@ class Sapiens2PointmapMeshAdvanced:
                 "max_depth": ("FLOAT", {"default": 25.0, "min": 0.01, "max": 1000.0, "step": 0.1}),
                 "center_mesh": ("BOOLEAN", {"default": True}),
                 "flip_y": ("BOOLEAN", {"default": True}),
+                "flip_z": ("BOOLEAN", {"default": True}),
             },
             "optional": {"mask": ("MASK",)},
         }
@@ -238,6 +240,7 @@ class Sapiens2PointmapMeshAdvanced:
         max_depth: float = 25.0,
         center_mesh: bool = True,
         flip_y: bool = True,
+        flip_z: bool = True,
         mask=None,
     ):
         _require_task(model, "pointmap")
@@ -261,6 +264,7 @@ class Sapiens2PointmapMeshAdvanced:
                 mesh_stride,
                 center_mesh,
                 flip_y,
+                flip_z,
             )
             path = _output_path(filename_prefix, index)
             _save_textured_glb(vertices, uvs, faces, texture, path)
