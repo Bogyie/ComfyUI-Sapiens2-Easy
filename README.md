@@ -162,12 +162,14 @@ Inputs:
 - `model`: pointmap model
 - `image`: input image
 - `preview_mode`: `result`, `overlay`, `side_by_side`, `source`
+- `include_background_plane`: add a masked original-image plane slightly behind the point cloud in the output GLB
+- `render_as_splats`: export small camera-facing quads instead of raw points to reduce holes during rotated captures
 - `mask`: optional mask
 
 Outputs:
 
 - `preview`: pointmap/depth-style preview using the selected preview mode
-- `pointmap_glb`: generated `.glb` path list, also shown in ComfyUI's 3D preview UI when available. The point cloud honors the optional input mask, is centered around its bounding box, and is oriented for GLB viewers.
+- `pointmap_glb`: generated `.glb` path list, also shown in ComfyUI's 3D preview UI when available. The point cloud honors the optional input mask, is centered around its bounding box, and is oriented for GLB viewers. The basic node uses `masked` background plane mode with offset `0.05` when background export is enabled.
 
 ### Sapiens2 Pointmap Mesh Advanced
 
@@ -178,6 +180,7 @@ Inputs:
 - `model`: pointmap model
 - `image`: input image used for both inference and texture
 - `preview_mode`: `result`, `overlay`, `side_by_side`, `source`
+- `render_mode`: `mesh` or `splats`
 - `filename_prefix`: output filename prefix
 - `mesh_stride`: mesh resolution step. `1` is highest detail, higher values are lighter.
 - `rtol`: 3x3 depth-jump tolerance for removing silhouette/edge triangles
@@ -185,6 +188,11 @@ Inputs:
 - `center_mesh`: center vertices around their bounding box
 - `flip_y`: flip the vertical axis for a conventional GLB Y-up view
 - `flip_z`: flip the depth axis for conventional GLB front/back orientation
+- `include_background_plane`: add a flat original-image plane behind the mesh in the output GLB
+- `background_plane`: `masked` keeps the object mask transparent, `full_image` keeps the full source image
+- `background_offset`: distance behind the farthest Z point
+- `splat_size`: splat quad size in scene units. `0` uses automatic sizing.
+- `splat_max_points`: point budget used when `render_mode` is `splats`
 - `mask`: optional foreground mask
 
 Outputs:

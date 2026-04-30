@@ -1,22 +1,24 @@
 import json
-import os
 import struct
-from io import BytesIO
 from pathlib import Path
 
 import numpy as np
 import torch
 import torch.nn.functional as F
-from PIL import Image as PILImage
 
 from .easy import (
+    BACKGROUND_PLANE_MODES,
+    _background_plane_from_pointmap,
     _comfy_image,
     _comfy_mask,
     _format_preview,
     _orient_pointmap_vertices,
+    _png_bytes,
+    _pointmap_center_offset,
     _output_root,
     _require_task,
     _ui_3d_entry,
+    _write_pointmap_glb,
 )
 from .inference import Sapiens2DenseInference
 
@@ -31,46 +33,47 @@ def _save_textured_glb(
     faces: np.ndarray,
     texture_rgb: np.ndarray,
     path: Path,
+    background: dict[str, np.ndarray] | None = None,
 ) -> None:
     vertices = np.ascontiguousarray(vertices, dtype=np.float32)
     uvs = np.ascontiguousarray(uvs, dtype=np.float32)
     faces = np.ascontiguousarray(faces, dtype=np.uint32)
 
-    png = BytesIO()
-    PILImage.fromarray(texture_rgb, mode="RGB").save(png, format="PNG")
-    png_bytes = png.getvalue()
+    buffer_parts: list[bytes] = []
+    buffer_views = []
 
-    vertex_bytes = vertices.tobytes()
-    uv_bytes = uvs.tobytes()
-    face_bytes = faces.tobytes()
-    vertex_offset = 0
-    uv_offset = vertex_offset + len(_pad4(vertex_bytes))
-    face_offset = uv_offset + len(_pad4(uv_bytes))
-    image_offset = face_offset + len(_pad4(face_bytes))
-    buffer = _pad4(vertex_bytes) + _pad4(uv_bytes) + _pad4(face_bytes) + _pad4(png_bytes)
+    def add_buffer_view(data: bytes, target: int | None = None) -> int:
+        offset = sum(len(_pad4(part)) for part in buffer_parts)
+        index = len(buffer_views)
+        buffer_parts.append(data)
+        view = {"buffer": 0, "byteOffset": offset, "byteLength": len(data)}
+        if target is not None:
+            view["target"] = target
+        buffer_views.append(view)
+        return index
+
+    vertex_view = add_buffer_view(vertices.tobytes(), 34962)
+    uv_view = add_buffer_view(uvs.tobytes(), 34962)
+    face_view = add_buffer_view(faces.tobytes(), 34963)
+    image_view = add_buffer_view(_png_bytes(texture_rgb))
 
     gltf = {
         "asset": {"version": "2.0", "generator": "ComfyUI-Sapiens2-Easy"},
-        "buffers": [{"byteLength": len(buffer)}],
-        "bufferViews": [
-            {"buffer": 0, "byteOffset": vertex_offset, "byteLength": len(vertex_bytes), "target": 34962},
-            {"buffer": 0, "byteOffset": uv_offset, "byteLength": len(uv_bytes), "target": 34962},
-            {"buffer": 0, "byteOffset": face_offset, "byteLength": len(face_bytes), "target": 34963},
-            {"buffer": 0, "byteOffset": image_offset, "byteLength": len(png_bytes)},
-        ],
+        "buffers": [],
+        "bufferViews": buffer_views,
         "accessors": [
             {
-                "bufferView": 0,
+                "bufferView": vertex_view,
                 "componentType": 5126,
                 "count": int(vertices.shape[0]),
                 "type": "VEC3",
                 "min": vertices.min(axis=0).tolist(),
                 "max": vertices.max(axis=0).tolist(),
             },
-            {"bufferView": 1, "componentType": 5126, "count": int(uvs.shape[0]), "type": "VEC2"},
-            {"bufferView": 2, "componentType": 5125, "count": int(faces.size), "type": "SCALAR"},
+            {"bufferView": uv_view, "componentType": 5126, "count": int(uvs.shape[0]), "type": "VEC2"},
+            {"bufferView": face_view, "componentType": 5125, "count": int(faces.size), "type": "SCALAR"},
         ],
-        "images": [{"bufferView": 3, "mimeType": "image/png"}],
+        "images": [{"bufferView": image_view, "mimeType": "image/png"}],
         "samplers": [{"magFilter": 9729, "minFilter": 9987, "wrapS": 10497, "wrapT": 10497}],
         "textures": [{"sampler": 0, "source": 0}],
         "materials": [
@@ -99,6 +102,54 @@ def _save_textured_glb(
         "scenes": [{"nodes": [0]}],
         "scene": 0,
     }
+
+    if background is not None:
+        bg_vertices = np.ascontiguousarray(background["vertices"], dtype=np.float32)
+        bg_uvs = np.ascontiguousarray(background["uvs"], dtype=np.float32)
+        bg_faces = np.ascontiguousarray(background["faces"], dtype=np.uint32)
+        bg_vertex_view = add_buffer_view(bg_vertices.tobytes(), 34962)
+        bg_uv_view = add_buffer_view(bg_uvs.tobytes(), 34962)
+        bg_face_view = add_buffer_view(bg_faces.tobytes(), 34963)
+        bg_image_view = add_buffer_view(_png_bytes(background["texture"]))
+        bg_pos_accessor = len(gltf["accessors"])
+        gltf["accessors"].extend(
+            [
+                {
+                    "bufferView": bg_vertex_view,
+                    "componentType": 5126,
+                    "count": int(bg_vertices.shape[0]),
+                    "type": "VEC3",
+                    "min": bg_vertices.min(axis=0).tolist(),
+                    "max": bg_vertices.max(axis=0).tolist(),
+                },
+                {"bufferView": bg_uv_view, "componentType": 5126, "count": int(bg_uvs.shape[0]), "type": "VEC2"},
+                {"bufferView": bg_face_view, "componentType": 5125, "count": int(bg_faces.size), "type": "SCALAR"},
+            ]
+        )
+        gltf["images"].append({"bufferView": bg_image_view, "mimeType": "image/png"})
+        gltf["textures"].append({"sampler": 0, "source": len(gltf["images"]) - 1})
+        gltf["materials"].append(
+            {
+                "pbrMetallicRoughness": {
+                    "baseColorTexture": {"index": len(gltf["textures"]) - 1},
+                    "metallicFactor": 0.0,
+                    "roughnessFactor": 1.0,
+                },
+                "alphaMode": "BLEND",
+                "doubleSided": True,
+            }
+        )
+        gltf["meshes"][0]["primitives"].append(
+            {
+                "attributes": {"POSITION": bg_pos_accessor, "TEXCOORD_0": bg_pos_accessor + 1},
+                "indices": bg_pos_accessor + 2,
+                "material": len(gltf["materials"]) - 1,
+                "mode": 4,
+            }
+        )
+
+    buffer = b"".join(_pad4(part) for part in buffer_parts)
+    gltf["buffers"] = [{"byteLength": len(buffer)}]
     json_bytes = _pad4(json.dumps(gltf, separators=(",", ":")).encode("utf-8"), b" ")
     total_size = 12 + 8 + len(json_bytes) + 8 + len(buffer)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -153,7 +204,7 @@ def _mesh_from_pointmap(
     center_mesh: bool,
     flip_y: bool,
     flip_z: bool,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, torch.Tensor | None]:
     mesh_stride = max(1, int(mesh_stride))
     _, height, width = pointmap.shape
     xyz = pointmap.detach().cpu().float().movedim(0, -1)[::mesh_stride, ::mesh_stride].contiguous()
@@ -177,8 +228,15 @@ def _mesh_from_pointmap(
         raise RuntimeError("No pointmap mesh faces survived filtering. Relax rtol/min_depth/max_depth or provide a better mask.")
 
     used = torch.unique(triangles.reshape(-1))
-    vertices = xyz.reshape(-1, 3)[used]
-    vertices = _orient_pointmap_vertices(vertices, center=center_mesh, flip_y=flip_y, flip_z=flip_z)
+    raw_vertices = xyz.reshape(-1, 3)[used]
+    center_offset = _pointmap_center_offset(raw_vertices, flip_y=flip_y, flip_z=flip_z) if center_mesh else None
+    vertices = _orient_pointmap_vertices(
+        raw_vertices,
+        center=center_mesh,
+        flip_y=flip_y,
+        flip_z=flip_z,
+        center_offset=center_offset,
+    )
 
     y_coords = torch.arange(0, height, mesh_stride, dtype=torch.float32)[:mesh_height] / max(height - 1, 1)
     x_coords = torch.arange(0, width, mesh_stride, dtype=torch.float32)[:mesh_width] / max(width - 1, 1)
@@ -188,7 +246,7 @@ def _mesh_from_pointmap(
 
     texture = _comfy_image(image)[0, :, :, :3]
     texture = (texture.detach().cpu().clamp(0, 1).numpy() * 255.0).round().astype(np.uint8)
-    return vertices.numpy(), uvs.numpy(), faces.numpy(), texture
+    return vertices.numpy(), uvs.numpy(), faces.numpy(), texture, center_offset
 
 
 def _output_path(filename_prefix: str, index: int) -> Path:
@@ -211,6 +269,7 @@ class Sapiens2PointmapMeshAdvanced:
                 "model": ("SAPIENS2_MODEL",),
                 "image": ("IMAGE",),
                 "preview_mode": (("result", "overlay", "side_by_side", "source"), {"default": "result"}),
+                "render_mode": (("mesh", "splats"), {"default": "mesh"}),
                 "filename_prefix": ("STRING", {"default": "sapiens2_pointmap_mesh"}),
                 "mesh_stride": ("INT", {"default": 2, "min": 1, "max": 16, "step": 1}),
                 "rtol": ("FLOAT", {"default": 0.04, "min": 0.001, "max": 1.0, "step": 0.001}),
@@ -219,6 +278,11 @@ class Sapiens2PointmapMeshAdvanced:
                 "center_mesh": ("BOOLEAN", {"default": True}),
                 "flip_y": ("BOOLEAN", {"default": True}),
                 "flip_z": ("BOOLEAN", {"default": True}),
+                "include_background_plane": ("BOOLEAN", {"default": False}),
+                "background_plane": (BACKGROUND_PLANE_MODES, {"default": "masked"}),
+                "background_offset": ("FLOAT", {"default": 0.05, "min": 0.0, "max": 10.0, "step": 0.01}),
+                "splat_size": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.001}),
+                "splat_max_points": ("INT", {"default": 30000, "min": 1000, "max": 100000, "step": 1000}),
             },
             "optional": {"mask": ("MASK",)},
         }
@@ -233,6 +297,7 @@ class Sapiens2PointmapMeshAdvanced:
         model,
         image,
         preview_mode: str = "result",
+        render_mode: str = "mesh",
         filename_prefix: str = "sapiens2_pointmap_mesh",
         mesh_stride: int = 2,
         rtol: float = 0.04,
@@ -241,6 +306,11 @@ class Sapiens2PointmapMeshAdvanced:
         center_mesh: bool = True,
         flip_y: bool = True,
         flip_z: bool = True,
+        include_background_plane: bool = False,
+        background_plane: str = "masked",
+        background_offset: float = 0.05,
+        splat_size: float = 0.0,
+        splat_max_points: int = 30000,
         mask=None,
     ):
         _require_task(model, "pointmap")
@@ -254,7 +324,27 @@ class Sapiens2PointmapMeshAdvanced:
         for index in range(pointmaps.shape[0]):
             mask_i = masks[index] if masks is not None else None
             image_i = images[min(index, images.shape[0] - 1)].unsqueeze(0)
-            vertices, uvs, faces, texture = _mesh_from_pointmap(
+            if render_mode == "splats":
+                path = Path(
+                    _write_pointmap_glb(
+                        pointmaps[index],
+                        image_i,
+                        mask=mask,
+                        mask_index=index,
+                        include_background_plane=include_background_plane,
+                        background_plane=background_plane,
+                        background_offset=background_offset,
+                        render_as_splats=True,
+                        splat_size=splat_size,
+                        max_points=splat_max_points,
+                        filename_prefix=filename_prefix,
+                    )
+                )
+                paths.append(path)
+                ui_entries.append(_ui_3d_entry(path))
+                continue
+
+            vertices, uvs, faces, texture, center_offset = _mesh_from_pointmap(
                 pointmaps[index],
                 image_i,
                 mask_i,
@@ -266,8 +356,24 @@ class Sapiens2PointmapMeshAdvanced:
                 flip_y,
                 flip_z,
             )
+            background = (
+                _background_plane_from_pointmap(
+                    pointmaps[index],
+                    image_i,
+                    mask_i,
+                    torch.from_numpy(vertices),
+                    center_offset,
+                    center_mesh,
+                    flip_y,
+                    flip_z,
+                    background_offset,
+                    background_plane,
+                )
+                if include_background_plane
+                else None
+            )
             path = _output_path(filename_prefix, index)
-            _save_textured_glb(vertices, uvs, faces, texture, path)
+            _save_textured_glb(vertices, uvs, faces, texture, path, background=background)
             paths.append(path)
             ui_entries.append(_ui_3d_entry(path))
 
