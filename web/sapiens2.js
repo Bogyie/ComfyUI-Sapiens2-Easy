@@ -196,27 +196,37 @@ function pickFromMenu(event, values, currentValue, callback) {
   return true;
 }
 
-function markDirty(node) {
+function refreshCanvas(node) {
   syncParts(node);
+  const canvases = [app.canvas, globalThis.LGraphCanvas?.active_canvas].filter(Boolean);
   node.setDirtyCanvas?.(true, true);
   node.graph?.setDirtyCanvas?.(true, true);
   app.graph?.setDirtyCanvas?.(true, true);
-  app.canvas?.setDirty?.(true, true);
-  app.canvas?.draw?.(true, true);
+  for (const canvas of canvases) {
+    canvas.dirty_canvas = true;
+    canvas.dirty_bgcanvas = true;
+    canvas.setDirty?.(true, true);
+    canvas.draw?.(true, true);
+  }
+}
+
+function markDirty(node) {
+  refreshCanvas(node);
+  requestAnimationFrame(() => refreshCanvas(node));
 }
 
 function makePartRowWidget(node, row = {}) {
-  const value = rowState(row);
   node.sapiens2PartRowIndex = (node.sapiens2PartRowIndex || 0) + 1;
   return {
     type: "sapiens2_part_row",
     name: `sapiens2_part_row_${node.sapiens2PartRowIndex}`,
-    value,
+    value: rowState(row),
     serialize: false,
     computeSize(width) {
       return [width || 300, ROW_HEIGHT];
     },
     draw(ctx, _node, width, y, height) {
+      const value = this.value;
       this.lastWidth = width;
       const layout = rowLayout(width);
       const rowY = y + 3;
@@ -246,28 +256,27 @@ function makePartRowWidget(node, row = {}) {
       const x = pos[0];
 
       if (x >= layout.toggle.x && x <= layout.toggle.x + layout.toggle.width) {
-        value.enabled = !value.enabled;
+        this.value = { ...this.value, enabled: !this.value.enabled };
         markDirty(node);
         return true;
       }
       if (x >= layout.name.x && x <= layout.name.x + layout.name.width) {
-        return pickFromMenu(event, SEG_PART_NAMES, value.name, (name) => {
+        return pickFromMenu(event, SEG_PART_NAMES, this.value.name, (name) => {
           if (!SEG_PARTS[name]) {
             return;
           }
-          value.name = name;
-          if (!SEG_PARTS[name].includes(value.detail)) {
-            value.detail = "all";
-          }
+          const detail = SEG_PARTS[name].includes(this.value.detail) ? this.value.detail : "all";
+          this.value = { ...this.value, name, detail };
           markDirty(node);
         });
       }
       if (x >= layout.detail.x && x <= layout.detail.x + layout.detail.width) {
-        return pickFromMenu(event, SEG_PARTS[value.name] || ["all"], value.detail, (detail) => {
-          if (!(SEG_PARTS[value.name] || ["all"]).includes(detail)) {
+        const details = SEG_PARTS[this.value.name] || ["all"];
+        return pickFromMenu(event, details, this.value.detail, (detail) => {
+          if (!details.includes(detail)) {
             return;
           }
-          value.detail = detail;
+          this.value = { ...this.value, detail };
           markDirty(node);
         });
       }
