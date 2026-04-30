@@ -33,7 +33,7 @@ This project wraps Sapiens2 human-centric vision models with a small, practical 
 | Segmentation | Body-part masks, merged mask, selected-area preview, raw labels |
 | Normal | Surface normal map |
 | Pointmap | Depth-style preview plus sampled `.glb` point cloud |
-| Pose | 308-keypoint pose preview plus OpenPose-style JSON |
+| Pose | 308-keypoint pose preview plus selectable OpenPose-compatible outputs |
 
 Supported model sizes:
 
@@ -140,12 +140,19 @@ Inputs:
 
 - `model`: pose model
 - `image`: input image
+- `target`: output format for `openpose_image` and `openpose_json`
+  - `BODY_25`
+  - `308-keypoint`
+  - `COCO_18`
+  - `OpenPose hand 21 + 21`
+  - `OpenPose face 70`
 - `bboxes`: optional person boxes. If omitted, people are detected automatically.
 
 Outputs:
 
-- `preview`: merged keypoint/bone preview
-- `openpose_json`: OpenPose-style JSON string with Sapiens2 keypoints
+- `openpose_image`: black-background pose render for the selected target
+- `preview`: selected target rendered over the source image
+- `openpose_json`: OpenPose-style JSON string for the selected target, with raw 308-keypoint data retained as `sapiens_keypoints_2d`
 
 ## Install
 
