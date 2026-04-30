@@ -42,6 +42,12 @@ def _mask_part_batch(masks: torch.Tensor, input_mask: torch.Tensor | None, part_
     return masks * input_mask.repeat_interleave(part_count, dim=0)
 
 
+def _mask_class_ids(class_ids: torch.Tensor, input_mask: torch.Tensor | None) -> torch.Tensor:
+    if input_mask is None:
+        return class_ids
+    return torch.where(input_mask > 0.5, class_ids, torch.zeros_like(class_ids))
+
+
 class Sapiens2SegmentationAdvanced:
     @classmethod
     def INPUT_TYPES(cls):
@@ -88,8 +94,12 @@ class Sapiens2SegmentationAdvanced:
         if input_mask is not None:
             merged_mask = _comfy_mask(merged_mask * input_mask)
         masks = _mask_part_batch(_part_masks(class_ids, part_ids), input_mask, len(part_ids))
+        masked_class_ids = _mask_class_ids(class_ids, input_mask)
+        result = dict(raw)
+        result["masked_class_ids"] = masked_class_ids
+        result["selected_part_ids"] = part_ids
         labels = {
-            "class_ids": class_ids,
+            "class_ids": masked_class_ids,
             "label_mask": labels_mask,
             "parts": SEG_PARTS,
             "groups": SEG_GROUPS,
@@ -101,7 +111,7 @@ class Sapiens2SegmentationAdvanced:
             merged_mask,
             masks,
             labels,
-            raw,
+            result,
         )
 
 
@@ -131,7 +141,11 @@ class Sapiens2NormalAdvanced:
             preserve_background=preserve_background,
             mask=mask,
         )
-        return (_format_preview(image, preview, preview_mode), foreground_mask, raw)
+        result = dict(raw)
+        input_mask = _match_mask(mask, raw["normal"].shape[0], raw["normal"].shape[-2], raw["normal"].shape[-1])
+        if input_mask is not None:
+            result["masked_normal"] = raw["normal"] * input_mask.unsqueeze(1)
+        return (_format_preview(image, preview, preview_mode), foreground_mask, result)
 
 
 class Sapiens2PoseAdvanced:

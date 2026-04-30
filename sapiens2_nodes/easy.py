@@ -284,24 +284,37 @@ def _orient_pointmap_vertices(
     return vertices.contiguous()
 
 
-def _pointmap_export_mask(mask: torch.Tensor | None, height: int, width: int) -> torch.Tensor | None:
+def _pointmap_export_mask(
+    mask: torch.Tensor | None,
+    height: int,
+    width: int,
+    batch_index: int = 0,
+) -> torch.Tensor | None:
     if mask is None:
         return None
-    mask = _comfy_mask(mask)[0].detach().cpu().float()
-    if mask.shape != (height, width):
-        mask = F.interpolate(mask.view(1, 1, *mask.shape), size=(height, width), mode="nearest").view(height, width)
-    return mask > 0.5
+    masks = _comfy_mask(mask)
+    if masks.shape[0] == 1:
+        selected = masks[0]
+    elif batch_index < masks.shape[0]:
+        selected = masks[batch_index]
+    else:
+        raise ValueError(f"Mask batch size ({masks.shape[0]}) does not include image index {batch_index}.")
+    selected = selected.detach().cpu().float()
+    if selected.shape != (height, width):
+        selected = F.interpolate(selected.view(1, 1, *selected.shape), size=(height, width), mode="nearest").view(height, width)
+    return selected > 0.5
 
 
 def _write_pointmap_glb(
     pointmap: torch.Tensor,
     image: torch.Tensor,
     mask: torch.Tensor | None = None,
+    mask_index: int = 0,
     max_points: int = 60000,
 ) -> str:
     points = pointmap.detach().cpu().float()
     image = _comfy_image(image)[0, :, :, :3]
-    export_mask = _pointmap_export_mask(mask, int(points.shape[1]), int(points.shape[2]))
+    export_mask = _pointmap_export_mask(mask, int(points.shape[1]), int(points.shape[2]), mask_index)
     valid = torch.isfinite(points).all(dim=0) & (points[2] > 0)
     if export_mask is not None:
         valid &= export_mask
@@ -944,8 +957,16 @@ class Sapiens2Pointmap:
     def run(self, model, image, preview_mode: str = "result", mask=None):
         _require_task(model, "pointmap")
         preview, _, _, raw = Sapiens2DenseInference().run(model, image, mask=mask)
-        glb_path = _write_pointmap_glb(raw["pointmap"][0], image, mask=mask)
-        return {"ui": {"3d": [_ui_3d_entry(glb_path)]}, "result": (_format_preview(image, preview, preview_mode), glb_path)}
+        pointmaps = raw["pointmap"].detach().cpu().float()
+        images = _comfy_image(image)
+        glb_paths = []
+        ui_entries = []
+        for index in range(pointmaps.shape[0]):
+            image_i = images[min(index, images.shape[0] - 1)].unsqueeze(0)
+            glb_path = _write_pointmap_glb(pointmaps[index], image_i, mask=mask, mask_index=index)
+            glb_paths.append(glb_path)
+            ui_entries.append(_ui_3d_entry(glb_path))
+        return {"ui": {"3d": ui_entries}, "result": (_format_preview(image, preview, preview_mode), "\n".join(glb_paths))}
 
 
 class Sapiens2Pose:

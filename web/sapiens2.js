@@ -372,7 +372,7 @@ function restorePartRows(node) {
 app.registerExtension({
   name: "ComfyUI.Sapiens2Easy",
   beforeRegisterNodeDef(nodeType, nodeData) {
-    if (nodeData.name !== "Sapiens2Segmentation") {
+    if (!["Sapiens2Segmentation", "Sapiens2SegmentationAdvanced"].includes(nodeData.name)) {
       return;
     }
     const originalOnNodeCreated = nodeType.prototype.onNodeCreated;
