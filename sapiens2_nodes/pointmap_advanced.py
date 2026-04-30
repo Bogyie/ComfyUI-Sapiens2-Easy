@@ -9,7 +9,15 @@ import torch
 import torch.nn.functional as F
 from PIL import Image as PILImage
 
-from .easy import _comfy_image, _comfy_mask, _format_preview, _output_root, _require_task, _ui_3d_entry
+from .easy import (
+    _comfy_image,
+    _comfy_mask,
+    _format_preview,
+    _orient_pointmap_vertices,
+    _output_root,
+    _require_task,
+    _ui_3d_entry,
+)
 from .inference import Sapiens2DenseInference
 
 
@@ -143,7 +151,7 @@ def _mesh_from_pointmap(
     max_depth: float,
     mesh_stride: int,
     center_mesh: bool,
-    flip_yz: bool,
+    flip_y: bool,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     mesh_stride = max(1, int(mesh_stride))
     _, height, width = pointmap.shape
@@ -169,10 +177,7 @@ def _mesh_from_pointmap(
 
     used = torch.unique(triangles.reshape(-1))
     vertices = xyz.reshape(-1, 3)[used]
-    if flip_yz:
-        vertices = vertices * torch.tensor([1.0, -1.0, -1.0])
-    if center_mesh:
-        vertices = vertices - vertices.mean(dim=0, keepdim=True)
+    vertices = _orient_pointmap_vertices(vertices, center=center_mesh, flip_y=flip_y, flip_z=False)
 
     y_coords = torch.arange(0, height, mesh_stride, dtype=torch.float32)[:mesh_height] / max(height - 1, 1)
     x_coords = torch.arange(0, width, mesh_stride, dtype=torch.float32)[:mesh_width] / max(width - 1, 1)
@@ -211,7 +216,7 @@ class Sapiens2PointmapMeshAdvanced:
                 "min_depth": ("FLOAT", {"default": 0.05, "min": 0.0, "max": 100.0, "step": 0.01}),
                 "max_depth": ("FLOAT", {"default": 25.0, "min": 0.01, "max": 1000.0, "step": 0.1}),
                 "center_mesh": ("BOOLEAN", {"default": True}),
-                "flip_yz": ("BOOLEAN", {"default": True}),
+                "flip_y": ("BOOLEAN", {"default": True}),
             },
             "optional": {"mask": ("MASK",)},
         }
@@ -232,7 +237,7 @@ class Sapiens2PointmapMeshAdvanced:
         min_depth: float = 0.05,
         max_depth: float = 25.0,
         center_mesh: bool = True,
-        flip_yz: bool = True,
+        flip_y: bool = True,
         mask=None,
     ):
         _require_task(model, "pointmap")
@@ -255,7 +260,7 @@ class Sapiens2PointmapMeshAdvanced:
                 max_depth,
                 mesh_stride,
                 center_mesh,
-                flip_yz,
+                flip_y,
             )
             path = _output_path(filename_prefix, index)
             _save_textured_glb(vertices, uvs, faces, texture, path)

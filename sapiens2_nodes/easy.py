@@ -264,10 +264,29 @@ def _pad4(data: bytes, fill: bytes = b"\x00") -> bytes:
     return data + fill * ((4 - len(data) % 4) % 4)
 
 
+def _orient_pointmap_vertices(
+    vertices: torch.Tensor,
+    center: bool = True,
+    flip_y: bool = True,
+    flip_z: bool = False,
+) -> torch.Tensor:
+    vertices = vertices.detach().cpu().float().clone()
+    if vertices.numel() == 0:
+        return vertices.contiguous()
+    axis = torch.tensor(
+        [1.0, -1.0 if flip_y else 1.0, -1.0 if flip_z else 1.0],
+        dtype=vertices.dtype,
+    )
+    vertices = vertices * axis
+    if center:
+        vertices = vertices - (vertices.amin(dim=0, keepdim=True) + vertices.amax(dim=0, keepdim=True)) * 0.5
+    return vertices.contiguous()
+
+
 def _write_pointmap_glb(pointmap: torch.Tensor, image: torch.Tensor, max_points: int = 60000) -> str:
     points = pointmap.detach().cpu().float()
     image = _comfy_image(image)[0, :, :, :3]
-    valid = torch.isfinite(points[2]) & (points[2] > 0)
+    valid = torch.isfinite(points).all(dim=0) & (points[2] > 0)
     count = int(valid.sum().item())
     path = _unique_path("pointmap", ".glb")
     if count == 0:
@@ -278,7 +297,7 @@ def _write_pointmap_glb(pointmap: torch.Tensor, image: torch.Tensor, max_points:
     sampled_points = points[:, ::stride, ::stride].permute(1, 2, 0).reshape(-1, 3)
     sampled_colors = image[::stride, ::stride].reshape(-1, 3)
     sampled_valid = valid[::stride, ::stride].reshape(-1)
-    vertices = sampled_points[sampled_valid].contiguous()
+    vertices = _orient_pointmap_vertices(sampled_points[sampled_valid])
     colors = (sampled_colors[sampled_valid].clamp(0, 1) * 255).round().to(torch.uint8).contiguous()
 
     vertex_bytes = _pad4(vertices.numpy().astype("float32").tobytes())
