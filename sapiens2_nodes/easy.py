@@ -20,15 +20,38 @@ SEG_GROUPS = {
     "Apparel": {"all": (1,)},
     "Eyeglass": {"all": (2,)},
     "Face Neck": {"all": (3,)},
+    "Face": {
+        "skin": (3,),
+        "with eyeglass": (2, 3),
+        "with mouth": (3, 24, 25, 26, 27, 28),
+        "all": (2, 3, 24, 25, 26, 27, 28),
+        "full": (2, 3, 24, 25, 26, 27, 28),
+    },
     "Hair": {"all": (4,)},
     "Foot": {"all": (5, 14), "left": (5,), "right": (14,)},
     "Hand": {"all": (6, 15), "left": (6,), "right": (15,)},
-    "Arm": {"all": (7, 11, 16, 20), "left": (7, 11), "right": (16, 20)},
-    "Lower Arm": {"all": (7, 16), "left": (7,), "right": (16,)},
-    "Upper Arm": {"all": (11, 20), "left": (11,), "right": (20,)},
-    "Leg": {"all": (8, 12, 17, 21), "left": (8, 12), "right": (17, 21)},
-    "Lower Leg": {"all": (8, 17), "left": (8,), "right": (17,)},
-    "Upper Leg": {"all": (12, 21), "left": (12,), "right": (21,)},
+    "Arm": {
+        "all": (7, 11, 16, 20),
+        "left": (7, 11),
+        "right": (16, 20),
+        "upper": (11, 20),
+        "lower": (7, 16),
+        "left upper": (11,),
+        "left lower": (7,),
+        "right upper": (20,),
+        "right lower": (16,),
+    },
+    "Leg": {
+        "all": (8, 12, 17, 21),
+        "left": (8, 12),
+        "right": (17, 21),
+        "upper": (12, 21),
+        "lower": (8, 17),
+        "left upper": (12,),
+        "left lower": (8,),
+        "right upper": (21,),
+        "right lower": (17,),
+    },
     "Shoe": {"all": (9, 18), "left": (9,), "right": (18,)},
     "Sock": {"all": (10, 19), "left": (10,), "right": (19,)},
     "Clothing": {"all": (13, 23), "upper": (23,), "lower": (13,)},
@@ -36,6 +59,7 @@ SEG_GROUPS = {
     "Lip": {"all": (24, 25), "upper": (25,), "lower": (24,)},
     "Teeth": {"all": (26, 27), "upper": (27,), "lower": (26,)},
     "Tongue": {"all": (28,)},
+    "Mouth": {"all": (24, 25, 26, 27, 28), "lip": (24, 25), "teeth": (26, 27), "tongue": (28,)},
 }
 
 
@@ -109,9 +133,21 @@ def _part_id(value: Any) -> int | None:
 def _group_ids(name: Any, detail: Any = "all") -> tuple[int, ...]:
     name_text = str(name).strip()
     detail_text = str(detail or "all").strip().lower()
+    legacy_limb = {
+        "Lower Arm": ("Arm", "lower"),
+        "Upper Arm": ("Arm", "upper"),
+        "Lower Leg": ("Leg", "lower"),
+        "Upper Leg": ("Leg", "upper"),
+    }
+    if name_text in legacy_limb:
+        name_text, limb_detail = legacy_limb[name_text]
+        if detail_text in ("left", "right"):
+            detail_text = f"{detail_text} {limb_detail}"
+        elif detail_text == "all":
+            detail_text = limb_detail
     if name_text in SEG_GROUPS:
         options = SEG_GROUPS[name_text]
-        return options.get(detail_text, options["all"])
+        return options.get(detail_text, next(iter(options.values())))
     part_index = _part_id(name_text)
     return (part_index,) if part_index is not None else ()
 

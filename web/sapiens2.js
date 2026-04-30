@@ -5,15 +5,12 @@ const SEG_PARTS = {
   Apparel: ["all"],
   Eyeglass: ["all"],
   "Face Neck": ["all"],
+  Face: ["all", "skin", "with eyeglass", "with mouth"],
   Hair: ["all"],
   Foot: ["all", "left", "right"],
   Hand: ["all", "left", "right"],
-  Arm: ["all", "left", "right"],
-  "Lower Arm": ["all", "left", "right"],
-  "Upper Arm": ["all", "left", "right"],
-  Leg: ["all", "left", "right"],
-  "Lower Leg": ["all", "left", "right"],
-  "Upper Leg": ["all", "left", "right"],
+  Arm: ["all", "left", "right", "upper", "lower", "left upper", "left lower", "right upper", "right lower"],
+  Leg: ["all", "left", "right", "upper", "lower", "left upper", "left lower", "right upper", "right lower"],
   Shoe: ["all", "left", "right"],
   Sock: ["all", "left", "right"],
   Clothing: ["all", "upper", "lower"],
@@ -21,6 +18,7 @@ const SEG_PARTS = {
   Lip: ["all", "upper", "lower"],
   Teeth: ["all", "upper", "lower"],
   Tongue: ["all"],
+  Mouth: ["all", "lip", "teeth", "tongue"],
 };
 
 const SEG_PART_NAMES = Object.keys(SEG_PARTS);
@@ -74,8 +72,15 @@ function partRows(node) {
 function legacyName(row = {}) {
   const value = row.name || row.part || "Hair";
   const normalized = String(value).replace(/^\d+\s*:\s*/, "").replaceAll("_", " ");
+  const withoutSide = normalized.replace(/^Left |^Right /, "");
+  if (withoutSide === "Lower Arm" || withoutSide === "Upper Arm") {
+    return "Arm";
+  }
+  if (withoutSide === "Lower Leg" || withoutSide === "Upper Leg") {
+    return "Leg";
+  }
   if (normalized.startsWith("Left ") || normalized.startsWith("Right ")) {
-    return normalized.replace(/^Left |^Right /, "");
+    return withoutSide;
   }
   if (normalized.endsWith(" Clothing")) {
     return "Clothing";
@@ -93,20 +98,43 @@ function legacyName(row = {}) {
 }
 
 function legacyDetail(row = {}) {
-  const value = String(row.detail || row.part || "all").toLowerCase();
-  if (value.includes("left")) {
+  const value = String(row.detail || row.part || "all").toLowerCase().replaceAll("_", " ");
+  const hasLeft = value.includes("left");
+  const hasRight = value.includes("right");
+  const hasUpper = value.includes("upper");
+  const hasLower = value.includes("lower");
+  if (value === "full") {
+    return "all";
+  }
+  if (hasLeft && hasUpper) {
+    return "left upper";
+  }
+  if (hasLeft && hasLower) {
+    return "left lower";
+  }
+  if (hasRight && hasUpper) {
+    return "right upper";
+  }
+  if (hasRight && hasLower) {
+    return "right lower";
+  }
+  if (hasLeft) {
     return "left";
   }
-  if (value.includes("right")) {
+  if (hasRight) {
     return "right";
   }
-  if (value.includes("upper")) {
+  if (hasUpper) {
     return "upper";
   }
-  if (value.includes("lower")) {
+  if (hasLower) {
     return "lower";
   }
-  return "all";
+  return value || "all";
+}
+
+function defaultDetail(name) {
+  return (SEG_PARTS[name] || ["all"])[0];
 }
 
 function rowState(row = {}) {
@@ -116,7 +144,7 @@ function rowState(row = {}) {
   return {
     enabled: row.enabled ?? true,
     name,
-    detail: details.includes(detail) ? detail : "all",
+    detail: details.includes(detail) ? detail : defaultDetail(name),
   };
 }
 
@@ -265,7 +293,7 @@ function makePartRowWidget(node, row = {}) {
           if (!SEG_PARTS[name]) {
             return;
           }
-          const detail = SEG_PARTS[name].includes(this.value.detail) ? this.value.detail : "all";
+          const detail = SEG_PARTS[name].includes(this.value.detail) ? this.value.detail : defaultDetail(name);
           this.value = { ...this.value, name, detail };
           markDirty(node);
         });
