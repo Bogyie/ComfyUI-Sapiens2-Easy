@@ -2,42 +2,36 @@ import os
 from pathlib import Path
 from typing import Tuple
 
-from .constants import DOWNLOAD_MODEL_SIZE_CHOICES, POSE_DETECTOR_REPO, SAPIENS2_HF_ORG
+from .constants import MODEL_SIZE_CHOICES, POSE_DETECTOR_REPO, SAPIENS2_HF_ORG
 from .folders import get_model_root
 
 
 HF_TASKS = {
-    "pretrain": {"repo_task": "pretrain", "folder": "pretrain", "loadable": False},
-    "segmentation": {"repo_task": "seg", "folder": "seg", "loadable": True},
-    "normal": {"repo_task": "normal", "folder": "normal", "loadable": True},
-    "pointmap": {"repo_task": "pointmap", "folder": "pointmap", "loadable": True},
-    "pose": {"repo_task": "pose", "folder": "pose", "loadable": False},
-    "albedo_custom": {"repo_task": None, "folder": "albedo", "loadable": True, "custom": True},
+    "segmentation": {"repo_task": "seg", "folder": "seg"},
+    "normal": {"repo_task": "normal", "folder": "normal"},
+    "pointmap": {"repo_task": "pointmap", "folder": "pointmap"},
+    "pose": {"repo_task": "pose", "folder": "pose"},
 }
 HF_DOWNLOAD_TASKS = tuple(HF_TASKS)
 
 
 def _size_to_arch(model_size: str) -> str:
-    if model_size == "1b_4k":
-        return "sapiens2_1b"
     return f"sapiens2_{model_size}"
 
 
 def _normalize_size_for_hf(model_size: str) -> str:
-    return "1b-4k" if model_size == "1b_4k" else model_size
+    return model_size
 
 
 def _normalize_size_for_file(model_size: str) -> str:
-    return "1b_4k" if model_size == "1b_4k" else model_size
+    return model_size
 
 
 def _validate_task_size(task: str, model_size: str) -> None:
-    if task == "pretrain":
-        return
-    if model_size in {"0.1b", "1b_4k"}:
+    if model_size not in MODEL_SIZE_CHOICES:
         raise ValueError(
             f"Official {task} checkpoints are not listed for size {model_size}. "
-            "Use 0.4b, 0.8b, 1b, or 5b, or provide repo_id and filename manually."
+            "Use 0.4b, 0.8b, 1b, or 5b."
         )
 
 
@@ -45,17 +39,10 @@ def _default_repo_and_filename(task: str, model_size: str) -> Tuple[str, str]:
     meta = HF_TASKS.get(task)
     if not meta:
         raise ValueError(f"Unsupported Hugging Face task: {task}")
-    if meta.get("custom"):
-        raise ValueError("albedo_custom requires explicit repo_id and filename.")
     _validate_task_size(task, model_size)
     repo_task = str(meta["repo_task"])
     hf_size = _normalize_size_for_hf(model_size)
     file_size = _normalize_size_for_file(model_size)
-    if task == "pretrain":
-        return (
-            f"{SAPIENS2_HF_ORG}/sapiens2-pretrain-{hf_size}",
-            f"sapiens2_{file_size}_pretrain.safetensors",
-        )
     return (
         f"{SAPIENS2_HF_ORG}/sapiens2-{repo_task}-{hf_size}",
         f"sapiens2_{file_size}_{repo_task}.safetensors",
@@ -72,12 +59,10 @@ def _default_local_dir(task: str) -> str:
 def _resolve_hf_args(task: str, model_size: str, repo_id: str, filename: str, local_dir: str):
     if task not in HF_DOWNLOAD_TASKS:
         raise ValueError(f"Unsupported Hugging Face task: {task}")
-    if model_size not in DOWNLOAD_MODEL_SIZE_CHOICES:
+    if model_size not in MODEL_SIZE_CHOICES:
         raise ValueError(f"Unsupported Sapiens2 model size: {model_size}")
     resolved_repo = repo_id.strip()
     resolved_filename = filename.strip()
-    if task == "albedo_custom" and bool(resolved_repo) != bool(resolved_filename):
-        raise ValueError("albedo_custom requires both repo_id and filename.")
     if not resolved_repo or not resolved_filename:
         default_repo, default_filename = _default_repo_and_filename(task, model_size)
         resolved_repo = resolved_repo or default_repo
@@ -122,7 +107,7 @@ def _download_with_hf_client_retry(download_fn, **kwargs):
         except Exception as retry_exc:
             raise RuntimeError(
                 "Hugging Face download failed after resetting a closed HTTP client "
-                f"for {_download_context(kwargs)}: {retry_exc}"
+                f"for {_download_context(kwargs)}. First error: {exc}. Retry error: {retry_exc}"
             ) from retry_exc
 
 

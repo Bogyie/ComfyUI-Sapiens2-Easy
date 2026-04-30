@@ -8,11 +8,8 @@ ARCH_SPECS = {
     "sapiens2_5b": {"embed_dim": 2432},
 }
 MODEL_SIZE_CHOICES = ("0.4b", "0.8b", "1b", "5b")
-DOWNLOAD_MODEL_SIZE_CHOICES = ("0.1b", "0.4b", "0.8b", "1b", "1b_4k", "5b")
 
-DTYPES = ("auto", "fp32", "fp16", "bf16")
 DEVICES = ("auto", "cuda", "mps", "cpu")
-COMBINE_MODES = ("max", "average", "min")
 SAPIENS2_HF_ORG = "facebook"
 POSE_DETECTOR_REPO = "facebook/detr-resnet-101-dc5"
 POSE_RTMDET_FILENAME = "rtmdet_m.pth"
@@ -54,8 +51,6 @@ SEG_PARTS = (
 )
 
 SEG_PART_OPTIONS = tuple(f"{idx:02d}: {name}" for idx, name in enumerate(SEG_PARTS))
-SEG_TOGGLE_KEYS = tuple(name.lower() for name in SEG_PARTS)
-SEG_OUTPUT_NAMES = tuple(f"{idx:02d}_{name.lower()}" for idx, name in enumerate(SEG_PARTS))
 SEG_CLASS_COUNT = len(SEG_PARTS)
 
 SEG_PALETTE = torch.tensor(

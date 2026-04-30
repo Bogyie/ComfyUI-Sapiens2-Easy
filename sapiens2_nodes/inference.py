@@ -69,20 +69,6 @@ class Sapiens2DenseInference:
                 )
             return (vis, fg, aux, raw)
 
-        if model.task == "albedo":
-            vis, fg, aux, albedo = _run_albedo(model, source)
-            raw = {
-                "task": model.task,
-                "albedo": albedo,
-                "checkpoint": model.checkpoint_path,
-                "config": model.config_path,
-            }
-            if input_mask is not None:
-                vis, fg, aux = _apply_optional_mask(
-                    vis, fg, aux, source, input_mask, preserve_background
-                )
-            return (vis, fg, aux, raw)
-
         if model.task == "pointmap":
             vis, fg, depth, pointmap, scale = _run_pointmap(model, source)
             raw = {
@@ -189,23 +175,6 @@ def _run_normal(model: Sapiens2Model, image_batch: torch.Tensor):
         normals.append(normal)
     mask_batch = torch.stack(masks, 0)
     return torch.stack(previews, 0), mask_batch, mask_batch, torch.stack(normals, 0)
-
-
-def _run_albedo(model: Sapiens2Model, image_batch: torch.Tensor):
-    previews = []
-    masks = []
-    albedos = []
-    for image_rgb in image_batch:
-        data = _run_pipeline(model, image_rgb)
-        with torch.inference_mode():
-            albedo = model.model(data["inputs"]).clamp(0, 1)
-        albedo = _resize_to_image(albedo.float(), image_rgb, crop_padding=True, data=data)
-        albedo = albedo.squeeze(0).detach().cpu().clamp(0, 1)
-        previews.append(albedo.movedim(0, -1))
-        masks.append(torch.ones(image_rgb.shape[:2], dtype=torch.float32))
-        albedos.append(albedo)
-    mask_batch = torch.stack(masks, 0)
-    return torch.stack(previews, 0), mask_batch, mask_batch, torch.stack(albedos, 0)
 
 
 def _run_pointmap(model: Sapiens2Model, image_batch: torch.Tensor):
