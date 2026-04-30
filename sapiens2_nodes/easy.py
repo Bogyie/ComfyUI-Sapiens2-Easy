@@ -20,7 +20,7 @@ from .types import Sapiens2PoseModel
 TASKS = ("segmentation", "normal", "pointmap", "pose")
 MANUAL_MODEL_SIZE_CHOICES = ("auto",) + MODEL_SIZE_CHOICES
 PREVIEW_MODES = ("result", "overlay", "side_by_side", "source")
-POINT_RENDER_MODES = ("points", "splats")
+POINT_RENDER_MODES = ("points", "splats", "mesh")
 CAMERA_DEPTH_PRESETS = ("default", "wide", "telephoto")
 CAMERA_DEPTH_SCALES = {"default": 1.0, "wide": 0.65, "telephoto": 1.25}
 SEG_GROUPS = {
@@ -1082,13 +1082,13 @@ class Sapiens2Pointmap:
                 "image": ("IMAGE",),
                 "preview_mode": (PREVIEW_MODES, {"default": "result"}),
                 "camera_lens": (CAMERA_DEPTH_PRESETS, {"default": "default"}),
-                "render_as_splats": ("BOOLEAN", {"default": False}),
+                "render_mode": (POINT_RENDER_MODES, {"default": "points"}),
             },
             "optional": {"mask": ("MASK",)},
         }
 
-    RETURN_TYPES = ("IMAGE", "STRING", "SAPIENS2_POINTMAP")
-    RETURN_NAMES = ("preview", "pointmap_glb", "pointmap")
+    RETURN_TYPES = ("IMAGE", "STRING")
+    RETURN_NAMES = ("preview", "pointmap_glb")
     FUNCTION = "run"
     CATEGORY = "Sapiens2"
 
@@ -1098,32 +1098,35 @@ class Sapiens2Pointmap:
         image,
         preview_mode: str = "result",
         camera_lens: str = "default",
-        render_as_splats: bool = False,
+        render_mode: str = "points",
         mask=None,
     ):
         _require_task(model, "pointmap")
         preview, _, _, raw = Sapiens2DenseInference().run(model, image, mask=mask)
-        pointmaps = raw["pointmap"].detach().cpu().float()
-        images = _comfy_image(image)
-        glb_paths = []
-        ui_entries = []
-        for index in range(pointmaps.shape[0]):
-            image_i = images[min(index, images.shape[0] - 1)].unsqueeze(0)
-            glb_path = _write_pointmap_glb(
-                pointmaps[index],
-                image_i,
-                mask=mask,
-                mask_index=index,
-                render_as_splats=render_as_splats,
-                depth_scale=CAMERA_DEPTH_SCALES.get(str(camera_lens), 1.0),
-                max_points=30000 if render_as_splats else 60000,
-            )
-            glb_paths.append(glb_path)
-            ui_entries.append(_ui_3d_entry(glb_path))
-        pointmap_result = {"pointmap": pointmaps, "preview": preview}
+        from .pointmap_advanced import _export_pointmap_models
+
+        paths, ui_entries = _export_pointmap_models(
+            raw,
+            image,
+            mask,
+            render_mode,
+            "pointmap",
+            2,
+            0.04,
+            0.05,
+            25.0,
+            True,
+            True,
+            True,
+            CAMERA_DEPTH_SCALES.get(str(camera_lens), 1.0),
+            1.0,
+            0.0,
+            0.0,
+            30000,
+        )
         return {
             "ui": {"3d": ui_entries},
-            "result": (_format_preview(image, preview, preview_mode), "\n".join(glb_paths), pointmap_result),
+            "result": (_format_preview(image, preview, preview_mode), "\n".join(str(path) for path in paths)),
         }
 
 

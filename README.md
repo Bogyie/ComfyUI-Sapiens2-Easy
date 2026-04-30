@@ -32,7 +32,7 @@ This project wraps Sapiens2 human-centric vision models with a small, practical 
 | --- | --- |
 | Segmentation | Body-part masks, merged mask, selected-area preview, raw labels |
 | Normal | Surface normal map |
-| Pointmap | Depth-style preview plus sampled `.glb` point cloud |
+| Pointmap | Depth-style preview plus `.glb` export as points, splats, or mesh |
 | Pose | 308-keypoint pose preview plus selectable OpenPose-compatible outputs |
 
 Supported model sizes:
@@ -155,7 +155,7 @@ Adds `foreground_mask`, raw `result`, and `preserve_background` for masked workf
 
 ### Sapiens2 Pointmap
 
-Runs pointmap estimation and writes a sampled GLB point cloud.
+Runs pointmap estimation and writes a GLB as points, splats, or a textured mesh.
 
 Inputs:
 
@@ -163,49 +163,24 @@ Inputs:
 - `image`: input image
 - `preview_mode`: `result`, `overlay`, `side_by_side`, `source`
 - `camera_lens`: `default`, `wide`, or `telephoto`. `wide` compresses Z depth for wide-angle images that look too deep; `telephoto` expands Z depth for flatter telephoto images.
-- `render_as_splats`: export small camera-facing quads instead of raw points to reduce holes during rotated captures
+- `render_mode`: `points`, `splats`, or `mesh`
 - `mask`: optional mask
 
 Outputs:
 
 - `preview`: pointmap/depth-style preview using the selected preview mode
-- `pointmap_glb`: generated `.glb` path list, also shown in ComfyUI's 3D preview UI when available. The point cloud honors the optional input mask, is centered around its bounding box, and is oriented for GLB viewers.
-- `pointmap`: raw pointmap data for utility nodes such as `Sapiens2 Pointmap To Mesh`
-
-### Sapiens2 Pointmap To Mesh
-
-Converts a `SAPIENS2_POINTMAP` output into a textured GLB mesh without running pointmap inference again. Use this after `Sapiens2 Pointmap` when you want to turn the visible point surface into a connected 3D model with hole filling or smoothing.
-
-Inputs:
-
-- `pointmap`: raw pointmap output from `Sapiens2 Pointmap`
-- `image`: source image used as the mesh texture
-- `filename_prefix`: output filename prefix
-- `mesh_stride`: mesh resolution step. `1` is highest detail, higher values are lighter.
-- `rtol`: 3x3 depth-jump tolerance for removing silhouette/edge triangles
-- `min_depth`, `max_depth`: valid Z range
-- `center_mesh`, `flip_y`, `flip_z`: GLB orientation controls
-- `depth_scale`, `xy_scale`, `depth_bias`: geometry scale/offset controls
-- `fill_holes`: fill small filtered gaps in the mesh by interpolating neighboring pointmap coordinates
-- `fill_iterations`: number of small-gap fill passes. Higher values can close more holes, but may bridge across sharp depth boundaries.
-- `smooth_iterations`, `smooth_strength`: optional surface smoothing after hole filling
-- `mask`: optional foreground mask
-
-Outputs:
-
-- `glb_paths`: generated `.glb` path list
-- `model_3d`: first generated `.glb` path, suitable for ComfyUI 3D preview nodes
+- `pointmap_glb`: generated `.glb` path list, also shown in ComfyUI's 3D preview UI when available. The output honors the optional input mask, is centered around its bounding box, and is oriented for GLB viewers.
 
 ### Sapiens2 Pointmap Mesh Advanced
 
-Runs pointmap estimation and writes a textured GLB mesh for 3D preview/export workflows. This is heavier than the basic pointmap node, but produces connected triangles with UVs and the source image embedded as texture.
+Runs pointmap estimation and writes a GLB for 3D preview/export workflows, with additional controls for point, splat, or textured mesh output. Mesh mode produces connected triangles with UVs and the source image embedded as texture.
 
 Inputs:
 
 - `model`: pointmap model
 - `image`: input image used for both inference and texture
 - `preview_mode`: `result`, `overlay`, `side_by_side`, `source`
-- `render_mode`: `mesh` or `splats`
+- `render_mode`: `points`, `splats`, or `mesh`
 - `filename_prefix`: output filename prefix
 - `mesh_stride`: mesh resolution step. `1` is highest detail, higher values are lighter.
 - `rtol`: 3x3 depth-jump tolerance for removing silhouette/edge triangles
