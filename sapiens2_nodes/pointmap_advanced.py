@@ -250,6 +250,7 @@ def _export_pointmap_models(
     depth_scale: float,
     xy_scale: float,
     depth_bias: float,
+    max_points: int,
     splat_size: float,
     splat_max_points: int,
 ) -> tuple[list[Path], list[dict[str, str]]]:
@@ -274,7 +275,7 @@ def _export_pointmap_models(
                     depth_scale=depth_scale,
                     xy_scale=xy_scale,
                     depth_bias=depth_bias,
-                    max_points=splat_max_points if render_mode == "splats" else 60000,
+                    max_points=splat_max_points if render_mode == "splats" else max(1000, int(max_points)),
                     filename_prefix=filename_prefix,
                 )
             )
@@ -325,6 +326,7 @@ class Sapiens2PointmapMeshAdvanced:
                 "depth_scale": ("FLOAT", {"default": 1.0, "min": 0.1, "max": 3.0, "step": 0.01}),
                 "xy_scale": ("FLOAT", {"default": 1.0, "min": 0.1, "max": 3.0, "step": 0.01}),
                 "depth_bias": ("FLOAT", {"default": 0.0, "min": -10.0, "max": 10.0, "step": 0.01}),
+                "max_points": ("INT", {"default": 60000, "min": 1000, "step": 1000}),
                 "splat_size": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.001}),
                 "splat_max_points": ("INT", {"default": 30000, "min": 1000, "max": 100000, "step": 1000}),
             },
@@ -353,6 +355,7 @@ class Sapiens2PointmapMeshAdvanced:
         depth_scale: float = 1.0,
         xy_scale: float = 1.0,
         depth_bias: float = 0.0,
+        max_points: int = 60000,
         splat_size: float = 0.0,
         splat_max_points: int = 30000,
         mask=None,
@@ -375,6 +378,7 @@ class Sapiens2PointmapMeshAdvanced:
             depth_scale,
             xy_scale,
             depth_bias,
+            max_points,
             splat_size,
             splat_max_points,
         )

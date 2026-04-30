@@ -164,6 +164,7 @@ Inputs:
 - `preview_mode`: `result`, `overlay`, `side_by_side`, `source`
 - `camera_lens`: `default`, `wide`, or `telephoto`. `wide` compresses Z depth for wide-angle images that look too deep; `telephoto` expands Z depth for flatter telephoto images.
 - `render_mode`: `points`, `splats`, or `mesh`
+- `quality`: `low`, `mid`, `high`, or `super high`. Used to calculate the point budget from image resolution when `render_mode` is `points`.
 - `mask`: optional mask
 
 Outputs:
@@ -191,6 +192,7 @@ Inputs:
 - `depth_scale`: scale Z depth before mesh or splat export. Values below `1.0` reduce exaggerated wide-angle depth.
 - `xy_scale`: scale X/Y before export
 - `depth_bias`: add a constant Z offset before export
+- `max_points`: manual point budget used when `render_mode` is `points`
 - `splat_size`: splat quad size in scene units. `0` uses automatic sizing.
 - `splat_max_points`: point budget used when `render_mode` is `splats`
 - `mask`: optional foreground mask

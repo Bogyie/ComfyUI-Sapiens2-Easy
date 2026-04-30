@@ -21,8 +21,10 @@ TASKS = ("segmentation", "normal", "pointmap", "pose")
 MANUAL_MODEL_SIZE_CHOICES = ("auto",) + MODEL_SIZE_CHOICES
 PREVIEW_MODES = ("result", "overlay", "side_by_side", "source")
 POINT_RENDER_MODES = ("points", "splats", "mesh")
+POINT_QUALITY_CHOICES = ("low", "mid", "high", "super high")
 CAMERA_DEPTH_PRESETS = ("default", "wide", "telephoto")
 CAMERA_DEPTH_SCALES = {"default": 1.0, "wide": 0.65, "telephoto": 1.25}
+POINT_QUALITY_FACTORS = {"low": 1 / 16, "mid": 1 / 4, "high": 1.0, "super high": 4.0}
 SEG_GROUPS = {
     "Background": {"all": (0,)},
     "Apparel": {"all": (1,)},
@@ -234,6 +236,13 @@ def _format_preview(source: torch.Tensor, result: torch.Tensor, mode: str, alpha
     if mode == "side_by_side":
         return torch.cat((source, result), dim=2)
     return result
+
+
+def _point_quality_max_points(image: torch.Tensor, quality: str) -> int:
+    image_batch = _comfy_image(image)
+    pixels = int(image_batch.shape[1]) * int(image_batch.shape[2])
+    factor = POINT_QUALITY_FACTORS.get(str(quality), POINT_QUALITY_FACTORS["mid"])
+    return max(1000, int(round(pixels * factor)))
 
 
 def _output_root() -> Path:
@@ -1083,6 +1092,7 @@ class Sapiens2Pointmap:
                 "preview_mode": (PREVIEW_MODES, {"default": "result"}),
                 "camera_lens": (CAMERA_DEPTH_PRESETS, {"default": "default"}),
                 "render_mode": (POINT_RENDER_MODES, {"default": "points"}),
+                "quality": (POINT_QUALITY_CHOICES, {"default": "mid"}),
             },
             "optional": {"mask": ("MASK",)},
         }
@@ -1099,6 +1109,7 @@ class Sapiens2Pointmap:
         preview_mode: str = "result",
         camera_lens: str = "default",
         render_mode: str = "points",
+        quality: str = "mid",
         mask=None,
     ):
         _require_task(model, "pointmap")
@@ -1121,6 +1132,7 @@ class Sapiens2Pointmap:
             CAMERA_DEPTH_SCALES.get(str(camera_lens), 1.0),
             1.0,
             0.0,
+            _point_quality_max_points(image, quality),
             0.0,
             30000,
         )
