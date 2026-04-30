@@ -21,8 +21,9 @@ def _segmentation_result(model, image):
     return preview, merged_mask, raw
 
 
-def _part_masks(class_ids: torch.Tensor) -> torch.Tensor:
-    masks = [(class_ids == idx).float() for idx in range(len(SEG_PARTS))]
+def _part_masks(class_ids: torch.Tensor, part_ids: list[int] | None = None) -> torch.Tensor:
+    part_ids = part_ids if part_ids is not None else list(range(len(SEG_PARTS)))
+    masks = [(class_ids == idx).float() for idx in part_ids]
     return torch.stack(masks, dim=1).flatten(0, 1)
 
 
@@ -129,8 +130,9 @@ class Sapiens2SegmentationCombine:
     def combine(self, model, image, grow_pixels: int = 0, blur_pixels: int = 0, invert: bool = False, **toggles):
         _, _, raw = _segmentation_result(model, image)
         class_ids = _seg_class_ids(raw)
-        masks = _part_masks(class_ids)
-        mask = _merge_parts(class_ids, _selected_ids(toggles))
+        part_ids = _selected_ids(toggles)
+        masks = _part_masks(class_ids, part_ids)
+        mask = _merge_parts(class_ids, part_ids)
         merged_mask = _process_mask(mask, grow_pixels, blur_pixels, invert)
         return (masks, merged_mask, _segs_from_mask(merged_mask), _mask_preview(image, merged_mask))
 
@@ -152,7 +154,7 @@ class Sapiens2SegmentationSelectPart:
         }
 
     RETURN_TYPES = ("MASK", "MASK", "SEGS", "IMAGE")
-    RETURN_NAMES = ("masks", "merged_mask", "segm", "preview")
+    RETURN_NAMES = ("mask", "merged_mask", "segm", "preview")
     FUNCTION = "select"
     CATEGORY = "Sapiens2/Segmentation"
 
