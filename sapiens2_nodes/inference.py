@@ -1,13 +1,8 @@
+import numpy as np
 import torch
 import torch.nn.functional as F
 
-from .processing import (
-    _albedo_outputs,
-    _normal_outputs,
-    _pointmap_outputs,
-    _prepare_inputs,
-    _segmentation_outputs,
-)
+from .constants import SEG_CLASS_COUNT, SEG_PALETTE
 from .types import Sapiens2Model
 
 
@@ -44,21 +39,15 @@ class Sapiens2DenseInference:
     ):
         source = image.detach().float().cpu().clamp(0, 1)
         input_mask = _prepare_optional_mask(mask, source) if mask is not None else None
-        inputs, metas = _prepare_inputs(image, model.task, model.device, model.dtype)
-
-        with torch.inference_mode():
-            output = model.model(inputs)
 
         if model.task == "segmentation":
-            logits = output.float().detach().cpu()
-            vis, fg, labels, class_ids = _segmentation_outputs(
-                logits, metas, overlay_opacity, source
-            )
+            vis, fg, labels, class_ids = _run_segmentation(model, source, overlay_opacity)
             raw = {
                 "task": model.task,
                 "class_ids": class_ids,
                 "labels": labels,
                 "checkpoint": model.checkpoint_path,
+                "config": model.config_path,
             }
             if input_mask is not None:
                 vis, fg, labels = _apply_optional_mask(
@@ -67,9 +56,13 @@ class Sapiens2DenseInference:
             return (vis, fg, labels, raw)
 
         if model.task == "normal":
-            pred = output.float().detach().cpu()
-            vis, fg, aux, normal = _normal_outputs(pred, metas)
-            raw = {"task": model.task, "normal": normal, "checkpoint": model.checkpoint_path}
+            vis, fg, aux, normal = _run_normal(model, source)
+            raw = {
+                "task": model.task,
+                "normal": normal,
+                "checkpoint": model.checkpoint_path,
+                "config": model.config_path,
+            }
             if input_mask is not None:
                 vis, fg, aux = _apply_optional_mask(
                     vis, fg, aux, source, input_mask, preserve_background
@@ -77,9 +70,13 @@ class Sapiens2DenseInference:
             return (vis, fg, aux, raw)
 
         if model.task == "albedo":
-            pred = output.float().detach().cpu()
-            vis, fg, aux, albedo = _albedo_outputs(pred, metas)
-            raw = {"task": model.task, "albedo": albedo, "checkpoint": model.checkpoint_path}
+            vis, fg, aux, albedo = _run_albedo(model, source)
+            raw = {
+                "task": model.task,
+                "albedo": albedo,
+                "checkpoint": model.checkpoint_path,
+                "config": model.config_path,
+            }
             if input_mask is not None:
                 vis, fg, aux = _apply_optional_mask(
                     vis, fg, aux, source, input_mask, preserve_background
@@ -87,16 +84,14 @@ class Sapiens2DenseInference:
             return (vis, fg, aux, raw)
 
         if model.task == "pointmap":
-            pointmap, scale = output
-            vis, fg, depth, restored_pointmap = _pointmap_outputs(
-                pointmap.float().detach().cpu(), scale.float().detach().cpu(), metas
-            )
+            vis, fg, depth, pointmap, scale = _run_pointmap(model, source)
             raw = {
                 "task": model.task,
-                "pointmap": restored_pointmap,
+                "pointmap": pointmap,
                 "depth_preview": depth,
-                "scale": scale.detach().cpu().float(),
+                "scale": scale,
                 "checkpoint": model.checkpoint_path,
+                "config": model.config_path,
             }
             if input_mask is not None:
                 vis, fg, depth = _apply_optional_mask(
@@ -105,6 +100,152 @@ class Sapiens2DenseInference:
             return (vis, fg, depth, raw)
 
         raise ValueError(f"Unsupported Sapiens2 task: {model.task}")
+
+
+def _to_bgr_uint8(image: torch.Tensor) -> np.ndarray:
+    rgb = (image.detach().cpu().clamp(0, 1).numpy() * 255.0).round().astype(np.uint8)
+    return rgb[:, :, ::-1].copy()
+
+
+def _run_pipeline(model: Sapiens2Model, image_rgb: torch.Tensor) -> dict:
+    data = model.model.pipeline(dict(img=_to_bgr_uint8(image_rgb)))
+    data = model.model.data_preprocessor(data)
+    if model.dtype != torch.float32:
+        data["inputs"] = data["inputs"].to(dtype=model.dtype)
+    return data
+
+
+def _padding_from_data(data: dict) -> tuple[int, int, int, int]:
+    padding = data["data_samples"]["meta"].get("padding_size", (0, 0, 0, 0))
+    if isinstance(padding, torch.Tensor):
+        padding = padding.detach().cpu().tolist()
+    return tuple(int(value) for value in padding)
+
+
+def _crop_padding(pred: torch.Tensor, data: dict) -> torch.Tensor:
+    inputs = data["inputs"]
+    pad_left, pad_right, pad_top, pad_bottom = _padding_from_data(data)
+    return pred[
+        :,
+        :,
+        pad_top : inputs.shape[2] - pad_bottom,
+        pad_left : inputs.shape[3] - pad_right,
+    ]
+
+
+def _resize_to_image(pred: torch.Tensor, image_rgb: torch.Tensor, crop_padding: bool, data: dict) -> torch.Tensor:
+    if crop_padding:
+        pred = _crop_padding(pred, data)
+    return F.interpolate(
+        pred,
+        size=(int(image_rgb.shape[0]), int(image_rgb.shape[1])),
+        mode="bilinear",
+        align_corners=False,
+    )
+
+
+def _run_segmentation(model: Sapiens2Model, image_batch: torch.Tensor, opacity: float):
+    previews = []
+    masks = []
+    labels_batch = []
+    class_ids_batch = []
+    palette = SEG_PALETTE
+
+    for image_rgb in image_batch:
+        data = _run_pipeline(model, image_rgb)
+        with torch.inference_mode():
+            logits = model.model(data["inputs"])
+        logits = _resize_to_image(logits.float(), image_rgb, crop_padding=False, data=data)
+        class_ids = logits.argmax(dim=1).squeeze(0).detach().cpu().long()
+        color = palette[class_ids.clamp(0, SEG_CLASS_COUNT - 1)]
+        preview = (image_rgb * (1.0 - opacity) + color * opacity).clamp(0, 1)
+        previews.append(preview)
+        masks.append((class_ids > 0).float())
+        labels_batch.append(class_ids.float() / float(SEG_CLASS_COUNT - 1))
+        class_ids_batch.append(class_ids)
+
+    return (
+        torch.stack(previews, 0),
+        torch.stack(masks, 0),
+        torch.stack(labels_batch, 0),
+        torch.stack(class_ids_batch, 0),
+    )
+
+
+def _run_normal(model: Sapiens2Model, image_batch: torch.Tensor):
+    previews = []
+    masks = []
+    normals = []
+    for image_rgb in image_batch:
+        data = _run_pipeline(model, image_rgb)
+        with torch.inference_mode():
+            normal = model.model(data["inputs"])
+        normal = normal / torch.norm(normal, dim=1, keepdim=True).clamp(min=1e-8)
+        normal = _resize_to_image(normal.float(), image_rgb, crop_padding=True, data=data)
+        normal = normal.squeeze(0).detach().cpu()
+        preview = ((normal.movedim(0, -1) + 1.0) * 0.5).clamp(0, 1)
+        previews.append(preview)
+        masks.append(torch.ones(image_rgb.shape[:2], dtype=torch.float32))
+        normals.append(normal)
+    mask_batch = torch.stack(masks, 0)
+    return torch.stack(previews, 0), mask_batch, mask_batch, torch.stack(normals, 0)
+
+
+def _run_albedo(model: Sapiens2Model, image_batch: torch.Tensor):
+    previews = []
+    masks = []
+    albedos = []
+    for image_rgb in image_batch:
+        data = _run_pipeline(model, image_rgb)
+        with torch.inference_mode():
+            albedo = model.model(data["inputs"]).clamp(0, 1)
+        albedo = _resize_to_image(albedo.float(), image_rgb, crop_padding=True, data=data)
+        albedo = albedo.squeeze(0).detach().cpu().clamp(0, 1)
+        previews.append(albedo.movedim(0, -1))
+        masks.append(torch.ones(image_rgb.shape[:2], dtype=torch.float32))
+        albedos.append(albedo)
+    mask_batch = torch.stack(masks, 0)
+    return torch.stack(previews, 0), mask_batch, mask_batch, torch.stack(albedos, 0)
+
+
+def _run_pointmap(model: Sapiens2Model, image_batch: torch.Tensor):
+    previews = []
+    masks = []
+    depths = []
+    pointmaps = []
+    scales = []
+    for image_rgb in image_batch:
+        data = _run_pipeline(model, image_rgb)
+        with torch.inference_mode():
+            pointmap, scale = model.model(data["inputs"])
+        scale = scale.float().reshape(-1, 1, 1, 1).clamp(min=1e-8)
+        pointmap = pointmap.float() / scale
+        pointmap = _resize_to_image(pointmap, image_rgb, crop_padding=True, data=data)
+        pointmap = pointmap.squeeze(0).detach().cpu()
+        depth = pointmap[2].float()
+        valid = torch.isfinite(depth) & (depth > 0)
+        preview = _depth_preview(depth, valid)
+        previews.append(preview.unsqueeze(-1).repeat(1, 1, 3))
+        masks.append(valid.float())
+        depths.append(preview)
+        pointmaps.append(pointmap)
+        scales.append(scale.detach().cpu().reshape(-1)[0])
+    return (
+        torch.stack(previews, 0),
+        torch.stack(masks, 0),
+        torch.stack(depths, 0),
+        torch.stack(pointmaps, 0),
+        torch.stack(scales, 0),
+    )
+
+
+def _depth_preview(depth: torch.Tensor, valid: torch.Tensor) -> torch.Tensor:
+    if not valid.any():
+        return torch.zeros_like(depth, dtype=torch.float32)
+    values = depth[valid]
+    lo = torch.quantile(values, 0.01)
+    hi = torch.quantile(values, 0.99)
+    return ((depth - lo) / (hi - lo).clamp(min=1e-6)).clamp(0, 1)
 
 
 def _prepare_optional_mask(mask: torch.Tensor, image: torch.Tensor) -> torch.Tensor:
@@ -119,7 +260,10 @@ def _prepare_optional_mask(mask: torch.Tensor, image: torch.Tensor) -> torch.Ten
         else:
             raise ValueError(f"Unsupported optional mask shape: {tuple(mask.shape)}")
     if mask.ndim != 3:
-        raise ValueError(f"Expected optional mask shape [H,W], [B,H,W], [B,H,W,C], or [B,C,H,W], got {tuple(mask.shape)}")
+        raise ValueError(
+            "Expected optional mask shape [H,W], [B,H,W], [B,H,W,C], "
+            f"or [B,C,H,W], got {tuple(mask.shape)}"
+        )
     if mask.shape[0] == 1 and image.shape[0] > 1:
         mask = mask.repeat(image.shape[0], 1, 1)
     if mask.shape[0] != image.shape[0]:
@@ -127,11 +271,7 @@ def _prepare_optional_mask(mask: torch.Tensor, image: torch.Tensor) -> torch.Ten
             f"Optional mask batch size ({mask.shape[0]}) does not match image batch size ({image.shape[0]})."
         )
     if mask.shape[-2:] != image.shape[1:3]:
-        mask = F.interpolate(
-            mask.unsqueeze(1),
-            size=image.shape[1:3],
-            mode="nearest",
-        ).squeeze(1)
+        mask = F.interpolate(mask.unsqueeze(1), size=image.shape[1:3], mode="nearest").squeeze(1)
     return mask.clamp(0, 1)
 
 

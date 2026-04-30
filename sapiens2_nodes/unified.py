@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from .constants import DEVICES, DTYPES, MODEL_SIZE_CHOICES, POSE_DETECTOR_REPO
+from .constants import DEVICES, DTYPES, MODEL_SIZE_CHOICES, POSE_DETECTOR_REPO, POSE_RTMDET_FILENAME
 from .folders import get_model_root
 from .huggingface import (
     download_sapiens2_from_hf,
@@ -105,6 +105,10 @@ def _resolve_or_download_detector(
         if not Path(path).exists():
             raise FileNotFoundError(f"Sapiens2 pose detector not found: {path}")
         return path, "explicit_detector_path"
+
+    rtmdet_path = get_model_root() / "detector" / POSE_RTMDET_FILENAME
+    if source != "download" and rtmdet_path.is_file() and not force_download:
+        return str(rtmdet_path), "local_rtmdet"
 
     repo_id = detector_repo_id.strip() or POSE_DETECTOR_REPO
     local_dir = detector_local_dir.strip()
@@ -221,7 +225,17 @@ class Sapiens2LoadModelAdvanced:
                 task,
                 checkpoint,
                 checkpoint_source,
-                f"detector_source: {detector_source}\ndetector: {detector}",
+                "\n".join(
+                    value
+                    for value in (
+                        f"detector_source: {detector_source}",
+                        f"detector: {detector}",
+                        f"detector_config: {model.detector_config_path}"
+                        if model.detector_config_path
+                        else "",
+                    )
+                    if value
+                ),
             )
             return (model, info)
 
@@ -236,6 +250,8 @@ class Sapiens2LoadModelAdvanced:
         extra = ""
         if resolved_repo or resolved_filename:
             extra = f"repo: {resolved_repo}\nfilename: {resolved_filename}"
+        if model.config_path:
+            extra = f"{extra}\nconfig: {model.config_path}" if extra else f"config: {model.config_path}"
         return (model, describe_model_source(task, checkpoint, checkpoint_source, extra))
 
 

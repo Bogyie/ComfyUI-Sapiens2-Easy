@@ -12,6 +12,7 @@ class Sapiens2Model:
     checkpoint_path: str
     device: torch.device
     dtype: torch.dtype
+    config_path: str = ""
 
 
 @dataclass
@@ -24,4 +25,6 @@ class Sapiens2PoseModel:
     dtype: torch.dtype
     codec: Any
     metainfo: dict[str, Any]
+    repo_path: str = ""
+    detector_config_path: str = ""
     task: str = "pose"
