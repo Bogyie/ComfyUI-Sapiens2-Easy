@@ -149,11 +149,9 @@ function rowLayout(width) {
   const padding = 8;
   const toggleWidth = 26;
   const removeWidth = 24;
-  const detailWidth = Math.min(96, Math.max(64, Math.floor(width * 0.24)));
-  const nameWidth = Math.max(
-    110,
-    width - padding * 2 - toggleWidth - detailWidth - removeWidth - ROW_GAP * 3
-  );
+  const available = Math.max(180, width - padding * 2 - toggleWidth - removeWidth - ROW_GAP * 3);
+  const detailWidth = Math.min(78, Math.max(58, Math.floor(available * 0.32)));
+  const nameWidth = Math.max(90, available - detailWidth);
   let x = padding;
   const toggle = { x, width: toggleWidth };
   x += toggleWidth + ROW_GAP;
@@ -200,7 +198,11 @@ function pickFromMenu(event, values, currentValue, callback) {
 
 function markDirty(node) {
   syncParts(node);
-  node.setDirtyCanvas(true, true);
+  node.setDirtyCanvas?.(true, true);
+  node.graph?.setDirtyCanvas?.(true, true);
+  app.graph?.setDirtyCanvas?.(true, true);
+  app.canvas?.setDirty?.(true, true);
+  app.canvas?.draw?.(true, true);
 }
 
 function makePartRowWidget(node, row = {}) {
