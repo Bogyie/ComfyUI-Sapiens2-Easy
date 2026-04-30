@@ -33,4 +33,3 @@ class Sapiens2MaskProcess:
     ):
         mask = _threshold_mask(mask, threshold)
         return (_process_mask(mask, grow_pixels, blur_pixels, invert),)
-

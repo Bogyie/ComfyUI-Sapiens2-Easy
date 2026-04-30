@@ -52,7 +52,7 @@ Use one node for every task:
 
 Pick `task` and `model_size`. The node first checks the local cache under `ComfyUI/models/sapiens2/<task>/`; if the file is missing, it downloads the matching Hugging Face checkpoint. The `load_info` output tells you exactly where the checkpoint and, for pose, detector were loaded from.
 
-Set `source = local_only` if you never want network downloads. Set `source = download` if you want to force Hugging Face resolution. Advanced inputs allow custom `repo_id`, `filename`, `checkpoint_path`, `revision`, `token`, `device`, `dtype`, and pose detector paths.
+Use `Sapiens2 Model Advanced` if you need `source = local_only`, `source = download`, custom `repo_id`, `filename`, `checkpoint_path`, `revision`, `token`, `device`, `dtype`, or pose detector paths.
 
 ## Quick Start
 
@@ -66,15 +66,32 @@ Basic workflow:
 
 Task-specific convenience:
 
-If you only need a mask or channel, connect the same `model` and `IMAGE` directly to a convenience node such as `Sapiens2 Segmentation Select Part`, `Sapiens2 Normal Channels`, `Sapiens2 Pointmap Depth Range`, or `Sapiens2 Pose Group Masks`. You do not need to wire a separate intermediate output first.
+If you only need a mask or channel, connect the same `model` and `IMAGE` directly to a convenience node such as `Sapiens2 Segmentation`, `Sapiens2 Normal Channels`, `Sapiens2 Pointmap Depth Range`, or `Sapiens2 Pose Group Masks`. You do not need to wire a separate intermediate output first.
+
+### Easy vs Advanced
+
+Easy nodes keep the first run short:
+
+- `Sapiens2 Model`: choose only task and model size. Missing checkpoints are downloaded, cached checkpoints are reused.
+- `Sapiens2 Run`: run the loaded model with default visualization settings.
+- `Sapiens2 Segmentation`: run body segmentation and return `masks`, `merged_mask`, `segm`, and `preview`.
+
+Advanced nodes expose the knobs only when you need them:
+
+- `Sapiens2 Model Advanced`: custom checkpoint path, Hugging Face repo/file, revision, token, device, dtype, pose detector, and upstream repo path.
+- `Sapiens2 Run Advanced`: overlay opacity, background masking, pose thresholds, NMS, pose drawing size, and flip-test options.
+- `Sapiens2 Segmentation Combine Parts`: 29 part toggles plus grow, blur, and invert while keeping the same `masks`, `merged_mask`, `segm`, and `preview` outputs.
 
 ## Nodes
 
 - `Sapiens2 Model`: local-or-download model preparation for segmentation, normal, pointmap, pose, and custom albedo.
 - `Sapiens2 Run`: unified inference. For dense models it returns the preview image, main mask, auxiliary mask, and result object. For pose it returns pose overlay, keypoint mask, and result object.
+- `Sapiens2 Model Advanced`: model loading with explicit paths, Hugging Face overrides, dtype/device controls, and pose detector settings.
+- `Sapiens2 Run Advanced`: unified inference with visualization and pose controls exposed.
+- `Sapiens2 Segmentation`: simple body segmentation. Outputs all 29 part masks as a mask batch, the merged foreground mask, Impact Pack-compatible `SEGS`, and a preview image.
 - `Sapiens2 Segmentation Part Masks`: runs segmentation and outputs all 29 class masks.
-- `Sapiens2 Segmentation Combine Parts`: runs segmentation and merges selected class toggles into one mask.
-- `Sapiens2 Segmentation Select Part`: runs segmentation and returns one selected class mask.
+- `Sapiens2 Segmentation Combine Parts`: runs segmentation and merges selected class toggles. Outputs `masks`, `merged_mask`, `segm`, and `preview`.
+- `Sapiens2 Segmentation Select Part`: runs segmentation for one selected class. Outputs the selected mask, `SEGS`, and a preview.
 - `Sapiens2 Normal Channels`: runs normal estimation and outputs x/y/z masks plus normal image.
 - `Sapiens2 Normal Select/Combine Channel(s)`: runs normal estimation and extracts or combines channels.
 - `Sapiens2 Pointmap Channels`: runs pointmap estimation and outputs x/y/z-depth/valid masks plus depth image.
