@@ -4,7 +4,6 @@ const SEG_PARTS = {
   Background: ["all"],
   Apparel: ["all"],
   Eyeglass: ["all"],
-  "Face Neck": ["all"],
   Face: ["all", "skin", "with eyeglass", "with mouth"],
   Hair: ["all"],
   Foot: ["all", "left", "right"],
@@ -73,6 +72,9 @@ function legacyName(row = {}) {
   const value = row.name || row.part || "Hair";
   const normalized = String(value).replace(/^\d+\s*:\s*/, "").replaceAll("_", " ");
   const withoutSide = normalized.replace(/^Left |^Right /, "");
+  if (normalized === "Face Neck") {
+    return "Face";
+  }
   if (withoutSide === "Lower Arm" || withoutSide === "Upper Arm") {
     return "Arm";
   }
@@ -91,18 +93,19 @@ function legacyName(row = {}) {
   if (normalized.endsWith(" Teeth")) {
     return "Teeth";
   }
-  if (normalized === "Face Neck") {
-    return "Face Neck";
-  }
   return SEG_PARTS[normalized] ? normalized : "Hair";
 }
 
 function legacyDetail(row = {}) {
   const value = String(row.detail || row.part || "all").toLowerCase().replaceAll("_", " ");
+  const name = String(row.name || row.part || "").replace(/^\d+\s*:\s*/, "").replaceAll("_", " ");
   const hasLeft = value.includes("left");
   const hasRight = value.includes("right");
   const hasUpper = value.includes("upper");
   const hasLower = value.includes("lower");
+  if (name === "Face Neck") {
+    return "skin";
+  }
   if (value === "full") {
     return "all";
   }
@@ -158,8 +161,7 @@ function rebuildPartRows(node, rows) {
   for (const row of rows) {
     addPartRow(node, rowState(row), false);
   }
-  syncParts(node);
-  node.setDirtyCanvas(true, true);
+  refreshCanvas(node);
 }
 
 function drawBox(ctx, x, y, width, height, color) {
@@ -238,9 +240,9 @@ function refreshCanvas(node) {
   }
 }
 
-function markDirty(node) {
-  refreshCanvas(node);
-  requestAnimationFrame(() => refreshCanvas(node));
+function updatePartRow(node, targetWidget, value) {
+  const rows = partRows(node).map((widget) => rowState(widget === targetWidget ? value : widget.value));
+  rebuildPartRows(node, rows);
 }
 
 function makePartRowWidget(node, row = {}) {
@@ -284,8 +286,7 @@ function makePartRowWidget(node, row = {}) {
       const x = pos[0];
 
       if (x >= layout.toggle.x && x <= layout.toggle.x + layout.toggle.width) {
-        this.value = { ...this.value, enabled: !this.value.enabled };
-        markDirty(node);
+        updatePartRow(node, this, { ...this.value, enabled: !this.value.enabled });
         return true;
       }
       if (x >= layout.name.x && x <= layout.name.x + layout.name.width) {
@@ -294,8 +295,7 @@ function makePartRowWidget(node, row = {}) {
             return;
           }
           const detail = SEG_PARTS[name].includes(this.value.detail) ? this.value.detail : defaultDetail(name);
-          this.value = { ...this.value, name, detail };
-          markDirty(node);
+          updatePartRow(node, this, { ...this.value, name, detail });
         });
       }
       if (x >= layout.detail.x && x <= layout.detail.x + layout.detail.width) {
@@ -304,8 +304,7 @@ function makePartRowWidget(node, row = {}) {
           if (!details.includes(detail)) {
             return;
           }
-          this.value = { ...this.value, detail };
-          markDirty(node);
+          updatePartRow(node, this, { ...this.value, detail });
         });
       }
       if (x >= layout.remove.x && x <= layout.remove.x + layout.remove.width) {
