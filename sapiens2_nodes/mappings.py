@@ -1,37 +1,20 @@
 from .albedo import Sapiens2AlbedoChannels, Sapiens2AlbedoCombineChannels, Sapiens2AlbedoSelectChannel
-from .huggingface import (
-    Sapiens2HuggingFaceDownload,
-    Sapiens2HuggingFaceModelLoader,
-    Sapiens2PoseDetectorHuggingFaceDownload,
-    Sapiens2PoseHuggingFaceModelLoader,
-)
-from .inference import Sapiens2DenseInference
-from .model_loading import Sapiens2ModelLoader
 from .normal import Sapiens2NormalChannels, Sapiens2NormalCombineChannels, Sapiens2NormalSelectChannel
 from .pointmap import Sapiens2PointmapChannels, Sapiens2PointmapCombineChannels, Sapiens2PointmapDepthRange, Sapiens2PointmapSelectChannel
 from .pose import (
     Sapiens2PoseCombineGroups,
     Sapiens2PoseGroupMasks,
-    Sapiens2PoseInference,
-    Sapiens2PoseModelLoader,
-    Sapiens2PosePersonDetection,
     Sapiens2PoseSelectGroup,
     Sapiens2SavePoseJSON,
 )
 from .segmentation import Sapiens2SegmentationCombine, Sapiens2SegmentationPartMasks, Sapiens2SegmentationSelectPart
+from .unified import Sapiens2LoadModel, Sapiens2Run
 from .utilities import Sapiens2MaskProcess
 
 
 NODE_CLASS_MAPPINGS = {
-    "Sapiens2ModelLoader": Sapiens2ModelLoader,
-    "Sapiens2HuggingFaceDownload": Sapiens2HuggingFaceDownload,
-    "Sapiens2HuggingFaceModelLoader": Sapiens2HuggingFaceModelLoader,
-    "Sapiens2PoseDetectorHuggingFaceDownload": Sapiens2PoseDetectorHuggingFaceDownload,
-    "Sapiens2PoseHuggingFaceModelLoader": Sapiens2PoseHuggingFaceModelLoader,
-    "Sapiens2DenseInference": Sapiens2DenseInference,
-    "Sapiens2PoseModelLoader": Sapiens2PoseModelLoader,
-    "Sapiens2PosePersonDetection": Sapiens2PosePersonDetection,
-    "Sapiens2PoseInference": Sapiens2PoseInference,
+    "Sapiens2LoadModel": Sapiens2LoadModel,
+    "Sapiens2Run": Sapiens2Run,
     "Sapiens2PoseGroupMasks": Sapiens2PoseGroupMasks,
     "Sapiens2PoseSelectGroup": Sapiens2PoseSelectGroup,
     "Sapiens2PoseCombineGroups": Sapiens2PoseCombineGroups,
@@ -53,15 +36,8 @@ NODE_CLASS_MAPPINGS = {
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "Sapiens2ModelLoader": "Load Sapiens2 Dense Model",
-    "Sapiens2HuggingFaceDownload": "Download Sapiens2 from Hugging Face",
-    "Sapiens2HuggingFaceModelLoader": "Load Sapiens2 from Hugging Face",
-    "Sapiens2PoseDetectorHuggingFaceDownload": "Download Sapiens2 Pose Detector from Hugging Face",
-    "Sapiens2PoseHuggingFaceModelLoader": "Load Sapiens2 Pose from Hugging Face",
-    "Sapiens2DenseInference": "Sapiens2 Dense Inference",
-    "Sapiens2PoseModelLoader": "Load Sapiens2 Pose Model",
-    "Sapiens2PosePersonDetection": "Sapiens2 Pose Person Detection",
-    "Sapiens2PoseInference": "Sapiens2 Pose Inference",
+    "Sapiens2LoadModel": "Sapiens2 Model",
+    "Sapiens2Run": "Sapiens2 Run",
     "Sapiens2PoseGroupMasks": "Sapiens2 Pose Group Masks",
     "Sapiens2PoseSelectGroup": "Sapiens2 Pose Select Group",
     "Sapiens2PoseCombineGroups": "Sapiens2 Pose Combine Groups",

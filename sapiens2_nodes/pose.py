@@ -8,15 +8,10 @@ import torch
 
 from .constants import (
     ARCH_SPECS,
-    DEVICES,
-    DTYPES,
-    MODEL_SIZE_CHOICES,
     POSE_CONFIG_DATASET,
     POSE_CONFIG_RESOLUTION,
-    POSE_DETECTOR_DIR_NAME,
     POSE_KEYPOINT_COUNT,
 )
-from .folders import get_filename_list, get_full_path, get_model_root
 from .model_loading import (
     _detect_prefix,
     _ensure_sapiens_importable,
@@ -28,45 +23,28 @@ from .model_loading import (
 from .types import Sapiens2PoseModel
 
 
-POSE_MODEL_FOLDER_NAMES = ("sapiens2_pose", "sapiens2")
-DETECTOR_MODEL_FOLDER_NAMES = ("sapiens2_detector", "sapiens2")
 POSE_GROUPS = ("body", "face", "left_hand", "right_hand", "feet", "extra")
 POSE_MODEL_CACHE: dict[tuple[str, str, str, str, str, str, int, int], Sapiens2PoseModel] = {}
 DETECTOR_CACHE: dict[tuple[str, str], tuple[Any, Any]] = {}
 
 
-def _pose_checkpoint_names() -> list[str]:
-    names = get_filename_list(POSE_MODEL_FOLDER_NAMES)
-    return names or ["put_sapiens2_pose_checkpoints_in_ComfyUI_models_sapiens2_pose"]
-
-
-def _detector_names() -> list[str]:
-    names = get_filename_list(DETECTOR_MODEL_FOLDER_NAMES)
-    return names or [POSE_DETECTOR_DIR_NAME]
-
-
-def _resolve_file(folder_names: tuple[str, ...], name: str, explicit_path: str, label: str) -> str:
-    explicit = explicit_path.strip()
-    if explicit:
-        path = os.path.expanduser(os.path.expandvars(explicit))
-        if not os.path.exists(path):
-            raise FileNotFoundError(f"{label} not found: {path}")
-        return path
-
-    path = get_full_path(folder_names, name)
-    if path and os.path.exists(path):
-        return path
-
-    root = get_model_root()
-    for candidate in (root / "detector" / name, root / "pose" / name, root / name):
-        if candidate.exists():
-            return str(candidate)
-
-    expanded_name = os.path.expanduser(os.path.expandvars(name.strip()))
-    if expanded_name and os.path.exists(expanded_name):
-        return expanded_name
-
-    raise FileNotFoundError(f"{label} not found. Set an explicit path or put it under ComfyUI/models/sapiens2.")
+def _pose_result(model, image, radius: int = 4, threshold: float = 0.3):
+    if not isinstance(model, Sapiens2PoseModel):
+        raise ValueError("This node needs a pose model.")
+    _, _, raw = Sapiens2PoseInference().run(
+        pose_model=model,
+        image=image,
+        keypoint_threshold=threshold,
+        bbox_threshold=0.3,
+        nms_threshold=0.3,
+        radius=radius,
+        thickness=2,
+        fallback_full_image_bbox=True,
+        flip_test=True,
+        show_points=True,
+        show_skeleton=True,
+    )
+    return raw
 
 
 def _config_path(sapiens_repo_path: str, arch: str) -> str:
@@ -272,7 +250,7 @@ def _coerce_sequence(value, batch_size: int, name: str):
 
 def _coerce_bboxes(raw: dict[str, Any], image_batch: torch.Tensor) -> dict[str, Any]:
     if not isinstance(raw, dict) or raw.get("task") != "bboxes":
-        raise ValueError("Expected SAPIENS2_BBOXES from Sapiens2 Pose Person Detection.")
+        raise ValueError("Expected a SAPIENS2_BBOXES value.")
     batch_size = image_batch.shape[0]
     height = int(image_batch.shape[1])
     width = int(image_batch.shape[2])
@@ -450,26 +428,6 @@ def _render_pose(
     return canvas
 
 
-def _render_bbox_preview(image: torch.Tensor, boxes: torch.Tensor, scores: torch.Tensor) -> torch.Tensor:
-    import cv2
-
-    canvas = _to_uint8_rgb(image).copy()
-    for box, score in zip(boxes, scores):
-        x1, y1, x2, y2 = torch.round(box).to(torch.int64).tolist()
-        cv2.rectangle(canvas, (x1, y1), (x2, y2), (66, 220, 255), 2, cv2.LINE_AA)
-        cv2.putText(
-            canvas,
-            f"{float(score):.2f}",
-            (x1, max(0, y1 - 4)),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.5,
-            (66, 220, 255),
-            1,
-            cv2.LINE_AA,
-        )
-    return torch.from_numpy(canvas.astype(np.float32) / 255.0)
-
-
 def _pose_mask(
     shape: tuple[int, int],
     keypoints,
@@ -513,97 +471,6 @@ def _group_keypoint_ids(metainfo: dict[str, Any], groups: tuple[str, ...]) -> li
     return sorted(set(ids))
 
 
-class Sapiens2PoseModelLoader:
-    @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "checkpoint_name": (_pose_checkpoint_names(),),
-                "detector_name": (_detector_names(),),
-            },
-            "optional": {
-                "model_size": (("auto",) + MODEL_SIZE_CHOICES,),
-                "device": (DEVICES, {"default": "auto"}),
-                "dtype": (DTYPES, {"default": "auto"}),
-                "checkpoint_path": ("STRING", {"default": "", "multiline": False}),
-                "detector_path": ("STRING", {"default": "", "multiline": False}),
-                "sapiens_repo_path": ("STRING", {"default": "", "multiline": False}),
-            },
-        }
-
-    RETURN_TYPES = ("SAPIENS2_POSE_MODEL",)
-    RETURN_NAMES = ("pose_model",)
-    FUNCTION = "load"
-    CATEGORY = "Sapiens2/Pose"
-
-    def load(
-        self,
-        checkpoint_name: str,
-        detector_name: str,
-        model_size: str = "auto",
-        device: str = "auto",
-        dtype: str = "auto",
-        checkpoint_path: str = "",
-        detector_path: str = "",
-        sapiens_repo_path: str = "",
-    ):
-        resolved_checkpoint = _resolve_file(POSE_MODEL_FOLDER_NAMES, checkpoint_name, checkpoint_path, "Sapiens2 pose checkpoint")
-        resolved_detector = _resolve_file(DETECTOR_MODEL_FOLDER_NAMES, detector_name, detector_path, "Sapiens2 pose detector")
-        return (
-            load_sapiens2_pose_model(
-                checkpoint_path=resolved_checkpoint,
-                detector_path=resolved_detector,
-                model_size=model_size,
-                device=device,
-                dtype=dtype,
-                sapiens_repo_path=sapiens_repo_path,
-            ),
-        )
-
-
-class Sapiens2PosePersonDetection:
-    @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "pose_model": ("SAPIENS2_POSE_MODEL",),
-                "image": ("IMAGE",),
-            },
-            "optional": {
-                "bbox_threshold": ("FLOAT", {"default": 0.3, "min": 0.0, "max": 1.0, "step": 0.01}),
-                "nms_threshold": ("FLOAT", {"default": 0.3, "min": 0.0, "max": 1.0, "step": 0.01}),
-                "fallback_full_image_bbox": ("BOOLEAN", {"default": False}),
-            }
-        }
-
-    RETURN_TYPES = ("IMAGE", "SAPIENS2_BBOXES")
-    RETURN_NAMES = ("bbox_preview", "bboxes")
-    FUNCTION = "detect"
-    CATEGORY = "Sapiens2/Pose"
-
-    def detect(
-        self,
-        pose_model: Sapiens2PoseModel,
-        image: torch.Tensor,
-        bbox_threshold: float = 0.3,
-        nms_threshold: float = 0.3,
-        fallback_full_image_bbox: bool = False,
-    ):
-        resolved = _resolve_pose_bboxes(
-            image_batch=image,
-            pose_model=pose_model,
-            bboxes=None,
-            bbox_threshold=bbox_threshold,
-            nms_threshold=nms_threshold,
-            fallback_full_image_bbox=fallback_full_image_bbox,
-        )
-        previews = [
-            _render_bbox_preview(image[index], boxes, scores)
-            for index, (boxes, scores) in enumerate(zip(resolved["boxes"], resolved["scores"]))
-        ]
-        return (torch.stack(previews, 0), resolved)
-
-
 class Sapiens2PoseInference:
     @classmethod
     def INPUT_TYPES(cls):
@@ -627,7 +494,7 @@ class Sapiens2PoseInference:
         }
 
     RETURN_TYPES = ("IMAGE", "MASK", "SAPIENS2_POSE_RESULT")
-    RETURN_NAMES = ("pose_image", "keypoint_mask", "raw")
+    RETURN_NAMES = ("pose_image", "keypoint_mask", "result")
     FUNCTION = "run"
     CATEGORY = "Sapiens2/Pose"
 
@@ -719,7 +586,8 @@ class Sapiens2PoseGroupMasks:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "raw": ("SAPIENS2_POSE_RESULT",),
+                "model": ("SAPIENS2_MODEL",),
+                "image": ("IMAGE",),
             },
             "optional": {
                 "radius": ("INT", {"default": 4, "min": 1, "max": 64, "step": 1}),
@@ -732,8 +600,8 @@ class Sapiens2PoseGroupMasks:
     FUNCTION = "split"
     CATEGORY = "Sapiens2/Pose"
 
-    def split(self, raw: dict[str, Any], radius: int = 4, threshold: float = 0.3):
-        _require_pose_raw(raw)
+    def split(self, model, image, radius: int = 4, threshold: float = 0.3):
+        raw = _pose_result(model, image, radius, threshold)
         return tuple(_raw_group_mask(raw, (group,), radius, threshold) for group in POSE_GROUPS)
 
 
@@ -742,7 +610,8 @@ class Sapiens2PoseSelectGroup:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "raw": ("SAPIENS2_POSE_RESULT",),
+                "model": ("SAPIENS2_MODEL",),
+                "image": ("IMAGE",),
                 "group": (POSE_GROUPS,),
             },
             "optional": {
@@ -756,8 +625,8 @@ class Sapiens2PoseSelectGroup:
     FUNCTION = "select"
     CATEGORY = "Sapiens2/Pose"
 
-    def select(self, raw: dict[str, Any], group: str, radius: int = 4, threshold: float = 0.3):
-        _require_pose_raw(raw)
+    def select(self, model, image, group: str, radius: int = 4, threshold: float = 0.3):
+        raw = _pose_result(model, image, radius, threshold)
         return (_raw_group_mask(raw, (group,), radius, threshold),)
 
 
@@ -767,7 +636,8 @@ class Sapiens2PoseCombineGroups:
         toggles = {group: ("BOOLEAN", {"default": True}) for group in POSE_GROUPS}
         return {
             "required": {
-                "raw": ("SAPIENS2_POSE_RESULT",),
+                "model": ("SAPIENS2_MODEL",),
+                "image": ("IMAGE",),
                 **toggles,
             },
             "optional": {
@@ -781,8 +651,8 @@ class Sapiens2PoseCombineGroups:
     FUNCTION = "combine"
     CATEGORY = "Sapiens2/Pose"
 
-    def combine(self, raw: dict[str, Any], radius: int = 4, threshold: float = 0.3, **toggles):
-        _require_pose_raw(raw)
+    def combine(self, model, image, radius: int = 4, threshold: float = 0.3, **toggles):
+        raw = _pose_result(model, image, radius, threshold)
         groups = tuple(group for group in POSE_GROUPS if bool(toggles.get(group, False)))
         return (_raw_group_mask(raw, groups, radius, threshold),)
 
@@ -792,7 +662,8 @@ class Sapiens2SavePoseJSON:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "raw": ("SAPIENS2_POSE_RESULT",),
+                "model": ("SAPIENS2_MODEL",),
+                "image": ("IMAGE",),
             },
             "optional": {
                 "filename_prefix": ("STRING", {"default": "sapiens2/pose", "multiline": False}),
@@ -806,14 +677,9 @@ class Sapiens2SavePoseJSON:
     CATEGORY = "Sapiens2/Pose"
     OUTPUT_NODE = True
 
-    def save(self, raw: dict[str, Any], filename_prefix: str = "sapiens2/pose", pretty_json: bool = True):
-        _require_pose_raw(raw)
+    def save(self, model, image, filename_prefix: str = "sapiens2/pose", pretty_json: bool = True):
+        raw = _pose_result(model, image)
         return ("\n".join(_save_pose_json(raw, filename_prefix, pretty_json)),)
-
-
-def _require_pose_raw(raw: dict[str, Any]) -> None:
-    if not isinstance(raw, dict) or raw.get("task") != "pose":
-        raise ValueError("Expected SAPIENS2_POSE_RESULT from Sapiens2 Pose Inference.")
 
 
 def _raw_group_mask(raw: dict[str, Any], groups: tuple[str, ...], radius: int, threshold: float) -> torch.Tensor:

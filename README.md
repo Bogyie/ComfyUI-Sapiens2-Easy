@@ -44,90 +44,54 @@ If `install.py --install-deps` says no `torch` package is detected, install the 
 
 When using an automatic custom-node manager, check whether it runs `pip install -r requirements.txt` before `install.py`. If it does, verify the resolved packages before applying the install, or install manually with `python install.py --install-deps` so the current PyTorch stack can be pinned.
 
-## Checkpoints
+## Model Loading
 
-Download task checkpoints from the Sapiens2 Hugging Face collection and place them under:
+Use one node for every task:
 
-```text
-ComfyUI/models/sapiens2/
-```
+- `Sapiens2 Model`
 
-Examples:
+Pick `task` and `model_size`. The node first checks the local cache under `ComfyUI/models/sapiens2/<task>/`; if the file is missing, it downloads the matching Hugging Face checkpoint. The `load_info` output tells you exactly where the checkpoint and, for pose, detector were loaded from.
 
-```text
-ComfyUI/models/sapiens2/seg/sapiens2_1b_seg.safetensors
-ComfyUI/models/sapiens2/normal/sapiens2_1b_normal.safetensors
-ComfyUI/models/sapiens2/pointmap/sapiens2_1b_pointmap.safetensors
-ComfyUI/models/sapiens2/albedo/sapiens2_1b_albedo.safetensors
-ComfyUI/models/sapiens2/pose/sapiens2_1b_pose.safetensors
-ComfyUI/models/sapiens2/detector/detr-resnet-101-dc5/
-```
-
-The loader also accepts an absolute `checkpoint_path`.
-
-The local loader also supports `task = auto` and `arch = auto`; it inspects checkpoint keys and the backbone embedding dimension before building the model. Loaded models are cached by checkpoint path, file mtime/size, device, dtype, task, and arch.
+Set `source = local_only` if you never want network downloads. Set `source = download` if you want to force Hugging Face resolution. Advanced inputs allow custom `repo_id`, `filename`, `checkpoint_path`, `revision`, `token`, `device`, `dtype`, and pose detector paths.
 
 ## Quick Start
 
 The nodes are designed so the first run needs only the obvious inputs. Leave advanced fields at their defaults unless you have a specific reason to change them.
 
-Dense tasks:
+Basic workflow:
 
-1. Use `Load Sapiens2 from Hugging Face`.
+1. Add `Sapiens2 Model`.
 2. Pick `task` and `model_size`.
-3. Connect it to `Sapiens2 Dense Inference` with an `IMAGE`.
+3. Connect `model` and your `IMAGE` to `Sapiens2 Run`.
 
-Local dense checkpoints:
+Task-specific convenience:
 
-1. Put checkpoints under `ComfyUI/models/sapiens2/<task>/`.
-2. Use `Load Sapiens2 Dense Model`.
-3. Leave `task`, `arch`, `device`, and `dtype` as `auto` for normal use.
-
-Pose:
-
-1. Use `Load Sapiens2 Pose from Hugging Face`.
-2. Pick `model_size`.
-3. Connect it to `Sapiens2 Pose Inference` with an `IMAGE`.
-
-Advanced settings such as custom repo IDs, local paths, revision, token, device, dtype, thresholds, mask grow/blur, and pose rendering controls remain available as optional inputs.
+If you only need a mask or channel, connect the same `model` and `IMAGE` directly to a convenience node such as `Sapiens2 Segmentation Select Part`, `Sapiens2 Normal Channels`, `Sapiens2 Pointmap Depth Range`, or `Sapiens2 Pose Group Masks`. You do not need to wire a separate intermediate output first.
 
 ## Nodes
 
-- `Load Sapiens2 Dense Model`: loads a Sapiens2 checkpoint for one task.
-- `Download Sapiens2 from Hugging Face`: downloads an official checkpoint and returns its local path.
-- `Load Sapiens2 from Hugging Face`: downloads an official checkpoint, then loads it as `SAPIENS2_MODEL`.
-- `Download Sapiens2 Pose Detector from Hugging Face`: downloads the DETR person detector used by the pose pipeline.
-- `Load Sapiens2 Pose from Hugging Face`: downloads a pose checkpoint and optionally downloads the DETR detector, then loads a pose model.
-- `Sapiens2 Dense Inference`: runs the loaded model on ComfyUI `IMAGE` tensors.
-- `Load Sapiens2 Pose Model`: loads a local Sapiens2 pose checkpoint and local DETR detector snapshot.
-- `Sapiens2 Pose Person Detection`: runs the pose detector only, previews person boxes, and returns reusable `SAPIENS2_BBOXES`.
-- `Sapiens2 Pose Inference`: runs person detection, top-down 308-keypoint pose estimation, and returns a rendered pose image, keypoint mask, and raw pose data.
-- `Sapiens2 Pose Group Masks`: splits pose keypoints into body, face, left hand, right hand, feet, and extra masks.
-- `Sapiens2 Pose Select/Combine Group(s)`: selects or combines pose keypoint groups.
-- `Sapiens2 Save Pose JSON`: writes per-image pose predictions, bboxes, keypoint scores, keypoint names, and skeleton links to JSON.
-- `Sapiens2 Segmentation Part Masks`: splits body segmentation into 29 separate `MASK` outputs.
-- `Sapiens2 Segmentation Combine Parts`: exposes 29 part toggles and merges selected parts into one `MASK`.
-- `Sapiens2 Segmentation Select Part`: selects one body part and optionally grows, shrinks, blurs, or inverts it.
-- `Sapiens2 Normal Channels`: splits normal output into x/y/z masks and a normal RGB image.
-- `Sapiens2 Normal Select/Combine Channel(s)`: selects or combines normal channels.
-- `Sapiens2 Pointmap Channels`: splits pointmap output into x/y/z-depth/valid masks and a depth image.
-- `Sapiens2 Pointmap Select/Combine Channel(s)`: selects or combines pointmap channels.
-- `Sapiens2 Pointmap Depth Range`: masks pixels by raw z-depth range.
-- `Sapiens2 Albedo Channels`: splits albedo output into red/green/blue/luminance masks and an albedo image.
-- `Sapiens2 Albedo Select/Combine Channel(s)`: selects or combines albedo channels.
-- `Sapiens2 Process Mask`: generic threshold/grow/shrink/blur/invert utility for any mask.
+- `Sapiens2 Model`: local-or-download model preparation for segmentation, normal, pointmap, pose, and custom albedo.
+- `Sapiens2 Run`: unified inference. For dense models it returns the preview image, main mask, auxiliary mask, and result object. For pose it returns pose overlay, keypoint mask, and result object.
+- `Sapiens2 Segmentation Part Masks`: runs segmentation and outputs all 29 class masks.
+- `Sapiens2 Segmentation Combine Parts`: runs segmentation and merges selected class toggles into one mask.
+- `Sapiens2 Segmentation Select Part`: runs segmentation and returns one selected class mask.
+- `Sapiens2 Normal Channels`: runs normal estimation and outputs x/y/z masks plus normal image.
+- `Sapiens2 Normal Select/Combine Channel(s)`: runs normal estimation and extracts or combines channels.
+- `Sapiens2 Pointmap Channels`: runs pointmap estimation and outputs x/y/z-depth/valid masks plus depth image.
+- `Sapiens2 Pointmap Select/Combine Channel(s)`: runs pointmap estimation and extracts or combines channels.
+- `Sapiens2 Pointmap Depth Range`: runs pointmap estimation and masks a z-depth range.
+- `Sapiens2 Albedo Channels`: runs albedo estimation and outputs red/green/blue/luminance masks plus albedo image.
+- `Sapiens2 Albedo Select/Combine Channel(s)`: runs albedo estimation and extracts or combines channels.
+- `Sapiens2 Pose Group Masks`: runs pose and outputs body, face, hands, feet, and extra masks.
+- `Sapiens2 Pose Select/Combine Group(s)`: runs pose and extracts or combines pose groups.
+- `Sapiens2 Save Pose JSON`: runs pose and writes per-image keypoints, bboxes, scores, names, and skeleton links to JSON.
+- `Sapiens2 Process Mask`: generic threshold/grow/shrink/blur/invert utility.
 
-For segmentation, the first output is an RGB overlay, `foreground_mask` is all non-background classes, and `aux_mask` contains class ids normalized to `0..1`.
+Pose uses the same `SAPIENS2_MODEL` input as every other task. The detector is resolved inside `Sapiens2 Model` for pose models.
 
-For normal/albedo, the image output is the restored visualization. For pointmap, the image output is a grayscale depth preview and `aux_mask` is normalized depth.
+## Hugging Face Mapping
 
-`Sapiens2 Dense Inference` accepts an optional `mask`. With `preserve_background` enabled, masked-out pixels keep the original input image; otherwise they are cleared.
-
-Pose inference uses the official top-down flow: DETR person boxes first, then Sapiens2 pose for each detected person. You can either let `Sapiens2 Pose Inference` run detection internally, or run `Sapiens2 Pose Person Detection` once and pass its `SAPIENS2_BBOXES` output into pose inference. If no person is detected, `fallback_full_image_bbox` can use the full image as a fallback bbox.
-
-## Hugging Face Loader
-
-The Hugging Face nodes auto-map these official Sapiens2 dense task repos:
+`Sapiens2 Model` auto-maps these official repos:
 
 ```text
 pretrain     -> facebook/sapiens2-pretrain-{0.1b,0.4b,0.8b,1b,1b-4k,5b}
@@ -138,15 +102,11 @@ pose         -> facebook/sapiens2-pose-{0.4b,0.8b,1b,5b}
 pose detector -> facebook/detr-resnet-101-dc5
 ```
 
-`Download Sapiens2 from Hugging Face` exposes `task` and `model_size` separately. `Load Sapiens2 from Hugging Face` exposes the same size choices for dense tasks that this node can run directly: segmentation, normal, pointmap, and custom albedo.
-
-Pose has separate Hugging Face nodes because it also needs the DETR person detector snapshot. `Load Sapiens2 Pose from Hugging Face` can download both the pose checkpoint and detector in one node.
-
-Downloaded files are saved under `ComfyUI/models/sapiens2/<task>/` by default. Use `repo_id` and `filename` to override the source, including for custom albedo checkpoints.
+Downloaded files are saved under `ComfyUI/models/sapiens2/<task>/` by default. Pose detector files are saved under `ComfyUI/models/sapiens2/detector/`.
 
 ## Design Notes
 
-Default settings favor the easiest working path: automatic device/dtype selection, automatic dense checkpoint task/architecture detection, built-in Hugging Face repo mapping, and pose detector download by default.
+Default settings favor the easiest working path: local cache first, download only when missing, automatic device/dtype selection, built-in Hugging Face repo mapping, and pose detector resolution inside the same model node.
 
 When you need more control, expose the optional inputs and override only the field you need. The code keeps those advanced paths separate from the common path so basic workflows stay short.
 

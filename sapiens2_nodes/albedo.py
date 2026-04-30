@@ -2,20 +2,27 @@ from typing import Any, Dict
 
 from .constants import COMBINE_MODES
 from .processing import _combine_channels, _process_mask, _require_result, _threshold_mask
+from .unified import run_result
+
+
+def _albedo_result(model, image, mask=None, preserve_background: bool = False):
+    raw = run_result(model, image, mask=mask, preserve_background=preserve_background)
+    _require_result(raw, "albedo")
+    return raw
 
 
 class Sapiens2AlbedoChannels:
     @classmethod
     def INPUT_TYPES(cls):
-        return {"required": {"raw": ("SAPIENS2_RESULT",)}}
+        return {"required": {"model": ("SAPIENS2_MODEL",), "image": ("IMAGE",)}}
 
     RETURN_TYPES = ("MASK", "MASK", "MASK", "MASK", "IMAGE")
     RETURN_NAMES = ("red", "green", "blue", "luminance", "albedo_image")
     FUNCTION = "split"
     CATEGORY = "Sapiens2/Albedo"
 
-    def split(self, raw: Dict[str, Any]):
-        _require_result(raw, "albedo")
+    def split(self, model, image):
+        raw = _albedo_result(model, image)
         albedo = raw["albedo"].detach().cpu().float().clamp(0, 1)
         lum = (0.2126 * albedo[:, 0] + 0.7152 * albedo[:, 1] + 0.0722 * albedo[:, 2]).clamp(0, 1)
         return (
@@ -32,7 +39,8 @@ class Sapiens2AlbedoSelectChannel:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "raw": ("SAPIENS2_RESULT",),
+                "model": ("SAPIENS2_MODEL",),
+                "image": ("IMAGE",),
                 "channel": (("red", "green", "blue", "luminance"),),
             },
             "optional": {
@@ -47,8 +55,8 @@ class Sapiens2AlbedoSelectChannel:
     FUNCTION = "select"
     CATEGORY = "Sapiens2/Albedo"
 
-    def select(self, raw: Dict[str, Any], channel: str, grow_pixels: int = 0, blur_pixels: int = 0, invert: bool = False):
-        _require_result(raw, "albedo")
+    def select(self, model, image, channel: str, grow_pixels: int = 0, blur_pixels: int = 0, invert: bool = False):
+        raw = _albedo_result(model, image)
         albedo = raw["albedo"].detach().cpu().float().clamp(0, 1)
         if channel == "luminance":
             mask = (0.2126 * albedo[:, 0] + 0.7152 * albedo[:, 1] + 0.0722 * albedo[:, 2]).clamp(0, 1)
@@ -63,7 +71,8 @@ class Sapiens2AlbedoCombineChannels:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "raw": ("SAPIENS2_RESULT",),
+                "model": ("SAPIENS2_MODEL",),
+                "image": ("IMAGE",),
                 "red": ("BOOLEAN", {"default": True}),
                 "green": ("BOOLEAN", {"default": True}),
                 "blue": ("BOOLEAN", {"default": True}),
@@ -85,7 +94,8 @@ class Sapiens2AlbedoCombineChannels:
 
     def combine(
         self,
-        raw: Dict[str, Any],
+        model,
+        image,
         red: bool,
         green: bool,
         blue: bool,
@@ -96,7 +106,7 @@ class Sapiens2AlbedoCombineChannels:
         blur_pixels: int = 0,
         invert: bool = False,
     ):
-        _require_result(raw, "albedo")
+        raw = _albedo_result(model, image)
         albedo = raw["albedo"].detach().cpu().float().clamp(0, 1)
         lum = (0.2126 * albedo[:, 0] + 0.7152 * albedo[:, 1] + 0.0722 * albedo[:, 2]).clamp(0, 1)
         channels = []

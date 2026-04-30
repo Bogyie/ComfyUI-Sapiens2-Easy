@@ -24,4 +24,4 @@ class Sapiens2PoseModel:
     dtype: torch.dtype
     codec: Any
     metainfo: dict[str, Any]
-
+    task: str = "pose"

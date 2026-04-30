@@ -10,20 +10,27 @@ from .processing import (
     _require_result,
     _threshold_mask,
 )
+from .unified import run_result
+
+
+def _pointmap_result(model, image, mask=None, preserve_background: bool = False):
+    raw = run_result(model, image, mask=mask, preserve_background=preserve_background)
+    _require_result(raw, "pointmap")
+    return raw
 
 
 class Sapiens2PointmapChannels:
     @classmethod
     def INPUT_TYPES(cls):
-        return {"required": {"raw": ("SAPIENS2_RESULT",)}}
+        return {"required": {"model": ("SAPIENS2_MODEL",), "image": ("IMAGE",)}}
 
     RETURN_TYPES = ("MASK", "MASK", "MASK", "MASK", "IMAGE")
     RETURN_NAMES = ("x", "y", "z_depth", "valid_mask", "depth_image")
     FUNCTION = "split"
     CATEGORY = "Sapiens2/Pointmap"
 
-    def split(self, raw: Dict[str, Any]):
-        _require_result(raw, "pointmap")
+    def split(self, model, image):
+        raw = _pointmap_result(model, image)
         pointmap = raw["pointmap"].detach().cpu().float()
         valid = torch.isfinite(pointmap[:, 2]) & (pointmap[:, 2] > 0)
         depth = raw.get("depth_preview")
@@ -44,7 +51,8 @@ class Sapiens2PointmapSelectChannel:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "raw": ("SAPIENS2_RESULT",),
+                "model": ("SAPIENS2_MODEL",),
+                "image": ("IMAGE",),
                 "channel": (("x", "y", "z_depth", "depth_preview", "valid_mask"),),
             },
             "optional": {
@@ -59,8 +67,8 @@ class Sapiens2PointmapSelectChannel:
     FUNCTION = "select"
     CATEGORY = "Sapiens2/Pointmap"
 
-    def select(self, raw: Dict[str, Any], channel: str, grow_pixels: int = 0, blur_pixels: int = 0, invert: bool = False):
-        _require_result(raw, "pointmap")
+    def select(self, model, image, channel: str, grow_pixels: int = 0, blur_pixels: int = 0, invert: bool = False):
+        raw = _pointmap_result(model, image)
         pointmap = raw["pointmap"].detach().cpu().float()
         valid = torch.isfinite(pointmap[:, 2]) & (pointmap[:, 2] > 0)
         if channel == "valid_mask":
@@ -78,7 +86,8 @@ class Sapiens2PointmapDepthRange:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "raw": ("SAPIENS2_RESULT",),
+                "model": ("SAPIENS2_MODEL",),
+                "image": ("IMAGE",),
                 "min_depth": ("FLOAT", {"default": 0.0, "min": -100000.0, "max": 100000.0, "step": 0.01}),
                 "max_depth": ("FLOAT", {"default": 100000.0, "min": -100000.0, "max": 100000.0, "step": 0.01}),
             },
@@ -96,14 +105,15 @@ class Sapiens2PointmapDepthRange:
 
     def range_mask(
         self,
-        raw: Dict[str, Any],
+        model,
+        image,
         min_depth: float,
         max_depth: float,
         grow_pixels: int = 0,
         blur_pixels: int = 0,
         invert: bool = False,
     ):
-        _require_result(raw, "pointmap")
+        raw = _pointmap_result(model, image)
         depth = raw["pointmap"][:, 2].detach().cpu().float()
         low, high = sorted((float(min_depth), float(max_depth)))
         valid = torch.isfinite(depth) & (depth > 0)
@@ -116,7 +126,8 @@ class Sapiens2PointmapCombineChannels:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "raw": ("SAPIENS2_RESULT",),
+                "model": ("SAPIENS2_MODEL",),
+                "image": ("IMAGE",),
                 "x": ("BOOLEAN", {"default": False}),
                 "y": ("BOOLEAN", {"default": False}),
                 "z_depth": ("BOOLEAN", {"default": True}),
@@ -138,7 +149,8 @@ class Sapiens2PointmapCombineChannels:
 
     def combine(
         self,
-        raw: Dict[str, Any],
+        model,
+        image,
         x: bool,
         y: bool,
         z_depth: bool,
@@ -149,7 +161,7 @@ class Sapiens2PointmapCombineChannels:
         blur_pixels: int = 0,
         invert: bool = False,
     ):
-        _require_result(raw, "pointmap")
+        raw = _pointmap_result(model, image)
         pointmap = raw["pointmap"].detach().cpu().float()
         valid = torch.isfinite(pointmap[:, 2]) & (pointmap[:, 2] > 0)
         channels = []

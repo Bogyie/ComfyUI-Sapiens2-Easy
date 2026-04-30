@@ -8,20 +8,27 @@ from .processing import (
     _signed_to_mask,
     _threshold_mask,
 )
+from .unified import run_result
+
+
+def _normal_result(model, image, mask=None, preserve_background: bool = False):
+    raw = run_result(model, image, mask=mask, preserve_background=preserve_background)
+    _require_result(raw, "normal")
+    return raw
 
 
 class Sapiens2NormalChannels:
     @classmethod
     def INPUT_TYPES(cls):
-        return {"required": {"raw": ("SAPIENS2_RESULT",)}}
+        return {"required": {"model": ("SAPIENS2_MODEL",), "image": ("IMAGE",)}}
 
     RETURN_TYPES = ("MASK", "MASK", "MASK", "IMAGE")
     RETURN_NAMES = ("x", "y", "z", "normal_image")
     FUNCTION = "split"
     CATEGORY = "Sapiens2/Normal"
 
-    def split(self, raw: Dict[str, Any]):
-        _require_result(raw, "normal")
+    def split(self, model, image):
+        raw = _normal_result(model, image)
         normal = raw["normal"].detach().cpu().float()
         image = ((normal + 1.0) * 0.5).clamp(0, 1).permute(0, 2, 3, 1)
         return (
@@ -37,7 +44,8 @@ class Sapiens2NormalSelectChannel:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "raw": ("SAPIENS2_RESULT",),
+                "model": ("SAPIENS2_MODEL",),
+                "image": ("IMAGE",),
                 "channel": (("x", "y", "z"),),
             },
             "optional": {
@@ -52,8 +60,8 @@ class Sapiens2NormalSelectChannel:
     FUNCTION = "select"
     CATEGORY = "Sapiens2/Normal"
 
-    def select(self, raw: Dict[str, Any], channel: str, grow_pixels: int = 0, blur_pixels: int = 0, invert: bool = False):
-        _require_result(raw, "normal")
+    def select(self, model, image, channel: str, grow_pixels: int = 0, blur_pixels: int = 0, invert: bool = False):
+        raw = _normal_result(model, image)
         index = {"x": 0, "y": 1, "z": 2}[channel]
         mask = _signed_to_mask(raw["normal"][:, index])
         return (_process_mask(mask, grow_pixels, blur_pixels, invert),)
@@ -64,7 +72,8 @@ class Sapiens2NormalCombineChannels:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "raw": ("SAPIENS2_RESULT",),
+                "model": ("SAPIENS2_MODEL",),
+                "image": ("IMAGE",),
                 "x": ("BOOLEAN", {"default": True}),
                 "y": ("BOOLEAN", {"default": True}),
                 "z": ("BOOLEAN", {"default": True}),
@@ -85,7 +94,8 @@ class Sapiens2NormalCombineChannels:
 
     def combine(
         self,
-        raw: Dict[str, Any],
+        model,
+        image,
         x: bool,
         y: bool,
         z: bool,
@@ -95,7 +105,7 @@ class Sapiens2NormalCombineChannels:
         blur_pixels: int = 0,
         invert: bool = False,
     ):
-        _require_result(raw, "normal")
+        raw = _normal_result(model, image)
         normal = raw["normal"].detach().cpu().float()
         channels = []
         if x:

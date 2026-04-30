@@ -6,34 +6,11 @@ from typing import Any, Dict, List
 
 import torch
 
-from .constants import ARCH_CHOICES, ARCH_SPECS, DEVICES, DTYPES, PATCH_SIZE, SEG_CLASS_COUNT, TARGET_SIZE, TASK_CHOICES
-from .folders import MODEL_FOLDER_NAMES, get_filename_list, get_full_path
+from .constants import ARCH_SPECS, PATCH_SIZE, SEG_CLASS_COUNT, TARGET_SIZE
 from .types import Sapiens2Model
 
 
 _MODEL_CACHE: dict[tuple[str, str, str, str, str, str, int, int], Sapiens2Model] = {}
-
-
-def _checkpoint_names() -> List[str]:
-    names = get_filename_list(MODEL_FOLDER_NAMES)
-    return names or ["put_sapiens2_checkpoints_in_ComfyUI_models_sapiens2"]
-
-
-def _resolve_checkpoint(checkpoint_name: str, checkpoint_path: str) -> str:
-    explicit = checkpoint_path.strip()
-    if explicit:
-        path = os.path.expanduser(os.path.expandvars(explicit))
-        if not os.path.isfile(path):
-            raise FileNotFoundError(f"Sapiens2 checkpoint not found: {path}")
-        return path
-
-    path = get_full_path(MODEL_FOLDER_NAMES, checkpoint_name)
-    if not path or not os.path.isfile(path):
-        raise FileNotFoundError(
-            "Sapiens2 checkpoint not found. Put .safetensors files under "
-            "ComfyUI/models/sapiens2 or set checkpoint_path."
-        )
-    return path
 
 
 def _candidate_repo_paths(repo_path: str) -> List[Path]:
@@ -433,48 +410,3 @@ def load_sapiens2_model(
     )
     _MODEL_CACHE[cache_key] = loaded
     return loaded
-
-
-class Sapiens2ModelLoader:
-    @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "checkpoint_name": (_checkpoint_names(),),
-            },
-            "optional": {
-                "task": (TASK_CHOICES,),
-                "arch": (ARCH_CHOICES,),
-                "device": (DEVICES, {"default": "auto"}),
-                "dtype": (DTYPES, {"default": "auto"}),
-                "checkpoint_path": ("STRING", {"default": "", "multiline": False}),
-                "sapiens_repo_path": ("STRING", {"default": "", "multiline": False}),
-            },
-        }
-
-    RETURN_TYPES = ("SAPIENS2_MODEL",)
-    RETURN_NAMES = ("model",)
-    FUNCTION = "load"
-    CATEGORY = "Sapiens2"
-
-    def load(
-        self,
-        checkpoint_name: str,
-        task: str = "auto",
-        arch: str = "auto",
-        device: str = "auto",
-        dtype: str = "auto",
-        checkpoint_path: str = "",
-        sapiens_repo_path: str = "",
-    ):
-        resolved_checkpoint = _resolve_checkpoint(checkpoint_name, checkpoint_path)
-        return (
-            load_sapiens2_model(
-                task=task,
-                arch=arch,
-                device=device,
-                dtype=dtype,
-                checkpoint_path=resolved_checkpoint,
-                sapiens_repo_path=sapiens_repo_path,
-            ),
-        )
