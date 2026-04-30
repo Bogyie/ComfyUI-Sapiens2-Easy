@@ -26,6 +26,6 @@ dependencies = [
 Repository = "https://github.com/Bogyie/ComfyUI-Sapiens2-Easy"
 
 [tool.comfy]
-PublisherId = "" # TODO: Fill in Publisher ID from the Comfy Registry Website.
+PublisherId = "bogyie"
 DisplayName = "ComfyUI-Sapiens2-Easy"
 Icon = "" # TODO: Add an SVG, PNG, JPG, or GIF URL. Max 800x400px.
