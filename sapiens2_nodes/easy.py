@@ -26,6 +26,8 @@ CAMERA_DEPTH_PRESETS = ("default", "wide", "telephoto")
 CAMERA_DEPTH_SCALES = {"default": 1.0, "wide": 0.65, "telephoto": 1.25}
 POINT_QUALITY_FACTORS = {"low": 1 / 16, "mid": 1 / 4, "high": 1.0, "super high": 4.0}
 POINT_QUALITY_MESH_STRIDES = {"low": 4, "mid": 2, "high": 1, "super high": 1}
+POINT_QUALITY_RTOL = {"low": 0.35, "mid": 0.5, "high": 0.65, "super high": 0.8}
+POINT_QUALITY_MASK_RTOL = {"low": 0.8, "mid": 0.9, "high": 1.0, "super high": 1.0}
 SEG_GROUPS = {
     "Background": {"all": (0,)},
     "Apparel": {"all": (1,)},
@@ -248,6 +250,11 @@ def _point_quality_max_points(image: torch.Tensor, quality: str) -> int:
 
 def _point_quality_mesh_stride(quality: str) -> int:
     return POINT_QUALITY_MESH_STRIDES.get(str(quality), POINT_QUALITY_MESH_STRIDES["mid"])
+
+
+def _point_quality_rtol(quality: str, has_mask: bool) -> float:
+    values = POINT_QUALITY_MASK_RTOL if has_mask else POINT_QUALITY_RTOL
+    return values.get(str(quality), values["mid"])
 
 
 def _output_root() -> Path:
@@ -1151,7 +1158,7 @@ class Sapiens2Pointmap:
             render_mode,
             "pointmap",
             _point_quality_mesh_stride(quality),
-            0.12,
+            _point_quality_rtol(quality, mask is not None),
             0.05,
             25.0,
             True,

@@ -172,7 +172,7 @@ Outputs:
 - `preview`: pointmap/depth-style preview using the selected preview mode
 - `pointmap_glb`: generated `.glb` path list, also shown in ComfyUI's 3D preview UI when available. The output honors the optional input mask, is centered around its bounding box, and is oriented for GLB viewers.
 
-Basic mesh output applies light surface smoothing and uses a more permissive edge filter to preserve thin regions. Use the advanced node when you need unsmoothed mesh export and manual geometry controls.
+Basic mesh output applies light surface smoothing and uses a quality-aware edge filter to preserve thin regions. Masked exports use a more permissive filter because the foreground is already constrained. Use the advanced node when you need unsmoothed mesh export and manual geometry controls.
 
 ### Sapiens2 Pointmap Mesh Advanced
 
@@ -186,7 +186,7 @@ Inputs:
 - `render_mode`: `points`, `splats`, or `mesh`
 - `filename_prefix`: output filename prefix
 - `mesh_stride`: mesh resolution step. `1` is highest detail, higher values are lighter.
-- `rtol`: 3x3 depth-jump tolerance for removing silhouette/edge triangles
+- `rtol`: 3x3 depth-jump tolerance for removing silhouette/edge triangles. Higher values preserve more thin regions; lower values reject more noisy edge faces.
 - `min_depth`, `max_depth`: valid Z range
 - `center_mesh`: center vertices around their bounding box
 - `flip_y`: flip the vertical axis for a conventional GLB Y-up view
