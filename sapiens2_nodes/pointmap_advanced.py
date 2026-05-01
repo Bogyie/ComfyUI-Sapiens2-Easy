@@ -20,6 +20,7 @@ from .easy import (
     _write_pointmap_glb,
 )
 from .inference import Sapiens2DenseInference
+from .progress import NodeProgress
 
 
 def _pad4(data: bytes, fill: bytes = b"\x00") -> bytes:
@@ -290,6 +291,7 @@ def _export_pointmap_models(
 
     paths: list[Path] = []
     ui_entries = []
+    progress = NodeProgress(pointmaps.shape[0])
     for index in range(pointmaps.shape[0]):
         mask_i = masks[index] if masks is not None else None
         image_i = images[min(index, images.shape[0] - 1)].unsqueeze(0)
@@ -311,6 +313,7 @@ def _export_pointmap_models(
             )
             paths.append(path)
             ui_entries.append(_ui_3d_entry(path))
+            progress.update()
             continue
 
         vertices, uvs, faces, texture = _mesh_from_pointmap(
@@ -334,6 +337,7 @@ def _export_pointmap_models(
         _save_textured_glb(vertices, uvs, faces, texture, path)
         paths.append(path)
         ui_entries.append(_ui_3d_entry(path))
+        progress.update()
 
     return paths, ui_entries
 

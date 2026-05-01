@@ -20,6 +20,7 @@ from .model_loading import (
     _resolve_dtype,
     get_sapiens_repo_path,
 )
+from .progress import NodeProgress
 from .types import Sapiens2PoseModel
 
 
@@ -334,6 +335,7 @@ def _resolve_pose_bboxes(
     bbox_threshold: float,
     nms_threshold: float,
     fallback_full_image_bbox: bool,
+    progress: NodeProgress | None = None,
 ) -> dict[str, Any]:
     batch_size = image_batch.shape[0]
     height = int(image_batch.shape[1])
@@ -348,6 +350,8 @@ def _resolve_pose_bboxes(
             boxes, scores = _detect_persons(image_rgb, pose_model, bbox_threshold, nms_threshold)
             boxes_batch.append(_normalize_boxes(boxes, height, width))
             scores_batch.append(_normalize_scores(scores, len(boxes)))
+            if progress is not None:
+                progress.update()
         resolved = {
             "task": "bboxes",
             "boxes": boxes_batch,
@@ -570,6 +574,8 @@ class Sapiens2PoseInference:
         bboxes: dict[str, Any] | None = None,
         render_outputs: bool = True,
     ):
+        batch_size = int(image.shape[0])
+        progress = NodeProgress(batch_size * (2 if bboxes is None else 1))
         resolved_bboxes = _resolve_pose_bboxes(
             image_batch=image,
             pose_model=pose_model,
@@ -577,6 +583,7 @@ class Sapiens2PoseInference:
             bbox_threshold=bbox_threshold,
             nms_threshold=nms_threshold,
             fallback_full_image_bbox=fallback_full_image_bbox,
+            progress=progress,
         )
         rendered = []
         masks = []
@@ -620,6 +627,7 @@ class Sapiens2PoseInference:
                     "keypoint_scores": scores_tensor,
                 }
             )
+            progress.update()
         keypoint_names = _keypoint_names_from_metainfo(pose_model.metainfo)
         raw = {
             "task": "pose",

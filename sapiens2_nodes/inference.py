@@ -3,6 +3,7 @@ import torch
 import torch.nn.functional as F
 
 from .constants import SEG_CLASS_COUNT, SEG_PALETTE
+from .progress import NodeProgress
 from .types import Sapiens2Model
 
 
@@ -136,6 +137,7 @@ def _run_segmentation(model: Sapiens2Model, image_batch: torch.Tensor, opacity: 
     labels_batch = []
     class_ids_batch = []
     palette = SEG_PALETTE
+    progress = NodeProgress(len(image_batch))
 
     for image_rgb in image_batch:
         data = _run_pipeline(model, image_rgb)
@@ -149,6 +151,7 @@ def _run_segmentation(model: Sapiens2Model, image_batch: torch.Tensor, opacity: 
         masks.append((class_ids > 0).float())
         labels_batch.append(class_ids.float() / float(SEG_CLASS_COUNT - 1))
         class_ids_batch.append(class_ids)
+        progress.update()
 
     return (
         torch.stack(previews, 0),
@@ -162,6 +165,7 @@ def _run_normal(model: Sapiens2Model, image_batch: torch.Tensor):
     previews = []
     masks = []
     normals = []
+    progress = NodeProgress(len(image_batch))
     for image_rgb in image_batch:
         data = _run_pipeline(model, image_rgb)
         with torch.inference_mode():
@@ -173,6 +177,7 @@ def _run_normal(model: Sapiens2Model, image_batch: torch.Tensor):
         previews.append(preview)
         masks.append(torch.ones(image_rgb.shape[:2], dtype=torch.float32))
         normals.append(normal)
+        progress.update()
     mask_batch = torch.stack(masks, 0)
     return torch.stack(previews, 0), mask_batch, mask_batch, torch.stack(normals, 0)
 
@@ -183,6 +188,7 @@ def _run_pointmap(model: Sapiens2Model, image_batch: torch.Tensor):
     depths = []
     pointmaps = []
     scales = []
+    progress = NodeProgress(len(image_batch))
     for image_rgb in image_batch:
         data = _run_pipeline(model, image_rgb)
         with torch.inference_mode():
@@ -199,6 +205,7 @@ def _run_pointmap(model: Sapiens2Model, image_batch: torch.Tensor):
         depths.append(preview)
         pointmaps.append(pointmap)
         scales.append(scale.detach().cpu().reshape(-1)[0])
+        progress.update()
     return (
         torch.stack(previews, 0),
         torch.stack(masks, 0),
