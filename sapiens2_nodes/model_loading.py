@@ -7,6 +7,7 @@ from typing import Dict, List
 import torch
 
 from .constants import ARCH_SPECS
+from .progress import NodeProgress
 from .types import Sapiens2Model
 
 
@@ -217,17 +218,23 @@ def load_sapiens2_model(
     if cached is not None:
         return cached
 
+    progress = NodeProgress(6)
     _ensure_sapiens_importable(sapiens_repo_path)
+    progress.update()
     state_dict = _read_checkpoint_state_dict(checkpoint_path)
+    progress.update()
     task, arch = _resolve_task_arch(task, arch, state_dict)
     config_path = _dense_config_path(sapiens_repo_path, task, arch)
     resolved_device = _resolve_device(device)
     resolved_dtype = _resolve_dtype(dtype, resolved_device)
+    progress.update()
 
     init_model = importlib.import_module("sapiens.dense.src.models.init_model").init_model
     model = init_model(str(config_path), checkpoint_path, device=str(resolved_device))
+    progress.update()
     if resolved_dtype != torch.float32:
         model.to(dtype=resolved_dtype)
+    progress.update()
     model.eval()
 
     loaded = Sapiens2Model(
@@ -240,4 +247,5 @@ def load_sapiens2_model(
         config_path=str(config_path),
     )
     _MODEL_CACHE[cache_key] = loaded
+    progress.update()
     return loaded
