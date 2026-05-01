@@ -172,7 +172,7 @@ Outputs:
 - `preview`: pointmap/depth-style preview using the selected preview mode
 - `pointmap_glb`: generated `.glb` path list, also shown in ComfyUI's 3D preview UI when available. The output honors the optional input mask, is centered around its bounding box, and is oriented for GLB viewers.
 
-Basic mesh output applies light surface smoothing and uses a quality-aware edge filter to preserve thin regions. Masked exports use a more permissive filter because the foreground is already constrained. Use the advanced node when you need unsmoothed mesh export and manual geometry controls.
+Basic mesh output applies edge-aware surface smoothing and uses a quality-aware edge filter to preserve thin regions while reducing pointmap jitter. Masked exports use a more permissive filter because the foreground is already constrained. Use the advanced node when you need unsmoothed mesh export and manual geometry controls.
 
 ### Sapiens2 Pointmap Mesh Advanced
 
@@ -197,7 +197,7 @@ Inputs:
 - `max_points`: manual point budget used when `render_mode` is `points`
 - `splat_size`: splat quad size in scene units. `0` uses automatic sizing.
 - `splat_max_points`: point budget used when `render_mode` is `splats`
-- `mesh_smooth_iterations`, `mesh_smooth_strength`: surface smoothing used when `render_mode` is `mesh`
+- `mesh_smooth_iterations`, `mesh_smooth_strength`: edge-aware surface smoothing used when `render_mode` is `mesh`
 - `mask`: optional foreground mask
 
 Note: pointmap mesh export reconstructs the visible surface from a single image. It can connect and fill the front-facing pointmap, but it does not infer a true hidden backside or watertight full body/object volume.

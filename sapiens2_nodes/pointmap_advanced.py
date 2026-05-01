@@ -152,6 +152,7 @@ def _smooth_pointmap_surface(
     valid: torch.Tensor,
     iterations: int,
     strength: float,
+    rtol: float,
 ) -> torch.Tensor:
     iterations = max(0, int(iterations))
     strength = float(max(0.0, min(1.0, strength)))
@@ -159,15 +160,27 @@ def _smooth_pointmap_surface(
         return xyz
 
     xyz_chw = xyz.movedim(-1, 0).clone()
-    kernel = torch.ones((1, 1, 3, 3), dtype=xyz_chw.dtype, device=xyz_chw.device)
+    valid_mask = valid.to(dtype=xyz_chw.dtype).unsqueeze(0)
+    spatial = torch.tensor(
+        [[0.5, 0.75, 0.5], [0.75, 1.0, 0.75], [0.5, 0.75, 0.5]],
+        dtype=xyz_chw.dtype,
+        device=xyz_chw.device,
+    ).reshape(1, 1, 9, 1, 1)
+    range_sigma = max(0.03, min(abs(float(rtol)) * 0.5, 0.35))
+    height, width = valid.shape
 
     for _ in range(iterations):
-        weights = valid.to(dtype=xyz_chw.dtype).unsqueeze(0).unsqueeze(0)
-        weighted_xyz = xyz_chw.unsqueeze(0) * weights
-        neighbor_sum = F.conv2d(weighted_xyz, kernel.expand(3, 1, 3, 3), padding=1, groups=3).squeeze(0)
-        neighbor_count = F.conv2d(weights, kernel, padding=1).squeeze(0).squeeze(0).clamp(min=1.0)
-        averaged = neighbor_sum / neighbor_count
-        xyz_chw[:, valid] = xyz_chw[:, valid] * (1.0 - strength) + averaged[:, valid] * strength
+        padded_xyz = F.pad(xyz_chw.unsqueeze(0), (1, 1, 1, 1), mode="replicate")
+        patches = F.unfold(padded_xyz, kernel_size=3).view(1, 3, 9, height, width)
+        padded_valid = F.pad(valid_mask.unsqueeze(0), (1, 1, 1, 1), mode="constant", value=0.0)
+        valid_patches = F.unfold(padded_valid, kernel_size=3).view(1, 1, 9, height, width)
+        center_depth = xyz_chw[2].abs().clamp(min=1e-6).view(1, 1, 1, height, width)
+        relative_depth_delta = (patches[:, 2:3] - xyz_chw[2].view(1, 1, 1, height, width)).abs() / center_depth
+        range_weights = torch.exp(-0.5 * (relative_depth_delta / range_sigma) ** 2)
+        weights = valid_patches * spatial * range_weights
+        averaged = (patches * weights).sum(dim=2).squeeze(0) / weights.sum(dim=2).squeeze(0).clamp(min=1e-6)
+        blended = xyz_chw * (1.0 - strength) + averaged * strength
+        xyz_chw = torch.where(valid_mask > 0, blended, xyz_chw)
 
     return xyz_chw.movedim(0, -1).contiguous()
 
@@ -195,7 +208,7 @@ def _mesh_from_pointmap(
     xyz = adjusted.movedim(0, -1)[::mesh_stride, ::mesh_stride].contiguous()
     sampled_mask = mask[::mesh_stride, ::mesh_stride] if mask is not None else None
     valid = _valid_depth_mask(xyz, sampled_mask, rtol, min_depth, max_depth)
-    xyz = _smooth_pointmap_surface(xyz, valid, mesh_smooth_iterations, mesh_smooth_strength)
+    xyz = _smooth_pointmap_surface(xyz, valid, mesh_smooth_iterations, mesh_smooth_strength, rtol)
     mesh_height, mesh_width = valid.shape
 
     rows = torch.arange(mesh_height - 1).view(-1, 1).expand(-1, mesh_width - 1)
@@ -368,8 +381,8 @@ class Sapiens2PointmapMeshAdvanced:
                 "max_points": ("INT", {"default": 60000, "min": 1000, "step": 1000}),
                 "splat_size": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.001}),
                 "splat_max_points": ("INT", {"default": 30000, "min": 1000, "max": 100000, "step": 1000}),
-                "mesh_smooth_iterations": ("INT", {"default": 2, "min": 0, "max": 16, "step": 1}),
-                "mesh_smooth_strength": ("FLOAT", {"default": 0.25, "min": 0.0, "max": 1.0, "step": 0.01}),
+                "mesh_smooth_iterations": ("INT", {"default": 4, "min": 0, "max": 16, "step": 1}),
+                "mesh_smooth_strength": ("FLOAT", {"default": 0.35, "min": 0.0, "max": 1.0, "step": 0.01}),
             },
             "optional": {"mask": ("MASK",)},
         }
@@ -399,8 +412,8 @@ class Sapiens2PointmapMeshAdvanced:
         max_points: int = 60000,
         splat_size: float = 0.0,
         splat_max_points: int = 30000,
-        mesh_smooth_iterations: int = 2,
-        mesh_smooth_strength: float = 0.25,
+        mesh_smooth_iterations: int = 4,
+        mesh_smooth_strength: float = 0.35,
         mask=None,
     ):
         _require_task(model, "pointmap")
