@@ -16,6 +16,7 @@ from .model_loading import (
     _resolve_device,
     _resolve_dtype,
     get_sapiens_repo_path,
+    init_sapiens_model,
     inspect_checkpoint_task_arch,
 )
 from .progress import NodeProgress
@@ -107,10 +108,9 @@ def load_sapiens2_pose_model(
     if cached is not None:
         return cached
 
-    progress = NodeProgress(7)
+    progress = NodeProgress(9)
     _ensure_sapiens_importable(sapiens_repo_path)
     progress.update()
-    from sapiens.pose.models import init_model
 
     resolved_device = _resolve_device(device)
     resolved_dtype = _resolve_dtype(dtype, resolved_device)
@@ -120,8 +120,14 @@ def load_sapiens2_pose_model(
     repo_path = str(get_sapiens_repo_path(sapiens_repo_path))
     detector_config_path = _detector_config_path(sapiens_repo_path) if os.path.isfile(detector_path) else ""
     progress.update()
-    model = init_model(config_path, checkpoint_path, device=str(resolved_device))
-    progress.update()
+    model = init_sapiens_model(
+        config_path,
+        checkpoint_path,
+        resolved_device,
+        resolved_dtype,
+        "sapiens.pose.models",
+        progress,
+    )
     codec, metainfo = _setup_pose_model(model, sapiens_repo_path)
     progress.update()
     if int(getattr(model.cfg, "num_keypoints", 0)) != POSE_KEYPOINT_COUNT:
@@ -133,10 +139,6 @@ def load_sapiens2_pose_model(
                 f"Checkpoint appears to be arch {detected_arch!r}, but {arch!r} was requested."
             )
     progress.update()
-    if resolved_dtype != torch.float32:
-        model.to(dtype=resolved_dtype)
-    model.eval()
-
     loaded = Sapiens2PoseModel(
         model=model,
         arch=arch,

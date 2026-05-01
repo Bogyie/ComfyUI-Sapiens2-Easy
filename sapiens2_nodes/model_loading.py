@@ -1,6 +1,7 @@
 import importlib
 import os
 import sys
+import time
 from pathlib import Path
 from typing import Dict, Iterable, List
 
@@ -215,6 +216,68 @@ def inspect_checkpoint_task_arch(checkpoint_path: str) -> tuple[str, str]:
     return _detect_task_from_keys(set(state_dict)), _detect_arch(state_dict)
 
 
+def init_sapiens_model(
+    config_path: str,
+    checkpoint_path: str,
+    device: torch.device,
+    dtype: torch.dtype,
+    registry_module: str,
+    progress: NodeProgress | None = None,
+):
+    importlib.import_module(registry_module)
+    from sapiens.engine.config import Config
+    from sapiens.engine.datasets import Compose
+    from sapiens.registry import MODELS
+
+    started_at = time.perf_counter()
+    config = Config.fromfile(config_path)
+    if "init_cfg" in config.model["backbone"]:
+        config.model["backbone"].pop("init_cfg")
+
+    model = MODELS.build(config.model)
+    if dtype != torch.float32:
+        model.to(dtype=dtype)
+    built_at = time.perf_counter()
+    if progress is not None:
+        progress.update()
+
+    if checkpoint_path.lower().endswith(".safetensors"):
+        from safetensors.torch import load_file
+
+        state_dict = load_file(checkpoint_path, device="cpu")
+    else:
+        checkpoint_data = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+        state_dict = checkpoint_data.get("state_dict", checkpoint_data.get("model", checkpoint_data))
+
+    incompat = model.load_state_dict(state_dict, strict=False)
+    del state_dict
+    loaded_at = time.perf_counter()
+    if incompat.missing_keys:
+        print(f"Missing keys: {incompat.missing_keys}")
+    if incompat.unexpected_keys:
+        print(f"Unexpected keys: {incompat.unexpected_keys}")
+    print(f"\033[96mModel loaded from {checkpoint_path}\033[0m")
+    if progress is not None:
+        progress.update()
+
+    model.cfg = config
+    model.data_preprocessor = MODELS.build(config.data_preprocessor)
+    model.pipeline = Compose(config.test_pipeline)
+    model.to(device)
+    model.eval()
+    moved_at = time.perf_counter()
+    print(
+        "Sapiens2 load timings: "
+        f"build={built_at - started_at:.1f}s, "
+        f"checkpoint={loaded_at - built_at:.1f}s, "
+        f"move_to_{device}={moved_at - loaded_at:.1f}s"
+    )
+    if progress is not None:
+        progress.update()
+
+    return model
+
+
 def _resolve_task_arch(
     requested_task: str,
     requested_arch: str,
@@ -270,7 +333,7 @@ def load_sapiens2_model(
     if cached is not None:
         return cached
 
-    progress = NodeProgress(6)
+    progress = NodeProgress(7)
     _ensure_sapiens_importable(sapiens_repo_path)
     progress.update()
     detected_task, detected_arch = inspect_checkpoint_task_arch(checkpoint_path)
@@ -283,13 +346,14 @@ def load_sapiens2_model(
     resolved_dtype = _resolve_dtype(dtype, resolved_device)
     progress.update()
 
-    init_model = importlib.import_module("sapiens.dense.src.models.init_model").init_model
-    model = init_model(str(config_path), checkpoint_path, device=str(resolved_device))
-    progress.update()
-    if resolved_dtype != torch.float32:
-        model.to(dtype=resolved_dtype)
-    progress.update()
-    model.eval()
+    model = init_sapiens_model(
+        str(config_path),
+        checkpoint_path,
+        resolved_device,
+        resolved_dtype,
+        "sapiens.dense.src.models.init_model",
+        progress,
+    )
 
     loaded = Sapiens2Model(
         model=model,
