@@ -33,10 +33,13 @@ def _save_textured_glb(
     faces: np.ndarray,
     texture_rgb: np.ndarray,
     path: Path,
+    normals: np.ndarray | None = None,
+    unlit_material: bool = True,
 ) -> None:
     vertices = np.ascontiguousarray(vertices, dtype=np.float32)
     uvs = np.ascontiguousarray(uvs, dtype=np.float32)
     faces = np.ascontiguousarray(faces, dtype=np.uint32)
+    normals = None if normals is None else np.ascontiguousarray(normals, dtype=np.float32)
 
     buffer_parts: list[bytes] = []
     buffer_views = []
@@ -53,44 +56,56 @@ def _save_textured_glb(
 
     vertex_view = add_buffer_view(vertices.tobytes(), 34962)
     uv_view = add_buffer_view(uvs.tobytes(), 34962)
+    normal_view = add_buffer_view(normals.tobytes(), 34962) if normals is not None else None
     face_view = add_buffer_view(faces.tobytes(), 34963)
     image_view = add_buffer_view(_png_bytes(texture_rgb))
+
+    accessors = [
+        {
+            "bufferView": vertex_view,
+            "componentType": 5126,
+            "count": int(vertices.shape[0]),
+            "type": "VEC3",
+            "min": vertices.min(axis=0).tolist(),
+            "max": vertices.max(axis=0).tolist(),
+        },
+        {"bufferView": uv_view, "componentType": 5126, "count": int(uvs.shape[0]), "type": "VEC2"},
+    ]
+    attributes = {"POSITION": 0, "TEXCOORD_0": 1}
+    if normal_view is not None:
+        attributes["NORMAL"] = len(accessors)
+        accessors.append({"bufferView": normal_view, "componentType": 5126, "count": int(normals.shape[0]), "type": "VEC3"})
+    face_accessor = len(accessors)
+    accessors.append({"bufferView": face_view, "componentType": 5125, "count": int(faces.size), "type": "SCALAR"})
+
+    material = {
+        "pbrMetallicRoughness": {
+            "baseColorTexture": {"index": 0},
+            "metallicFactor": 0.0,
+            "roughnessFactor": 1.0,
+        },
+        "doubleSided": True,
+    }
+    extensions_used = []
+    if unlit_material:
+        material["extensions"] = {"KHR_materials_unlit": {}}
+        extensions_used.append("KHR_materials_unlit")
 
     gltf = {
         "asset": {"version": "2.0", "generator": "ComfyUI-Sapiens2-Easy"},
         "buffers": [],
         "bufferViews": buffer_views,
-        "accessors": [
-            {
-                "bufferView": vertex_view,
-                "componentType": 5126,
-                "count": int(vertices.shape[0]),
-                "type": "VEC3",
-                "min": vertices.min(axis=0).tolist(),
-                "max": vertices.max(axis=0).tolist(),
-            },
-            {"bufferView": uv_view, "componentType": 5126, "count": int(uvs.shape[0]), "type": "VEC2"},
-            {"bufferView": face_view, "componentType": 5125, "count": int(faces.size), "type": "SCALAR"},
-        ],
+        "accessors": accessors,
         "images": [{"bufferView": image_view, "mimeType": "image/png"}],
         "samplers": [{"magFilter": 9729, "minFilter": 9987, "wrapS": 10497, "wrapT": 10497}],
         "textures": [{"sampler": 0, "source": 0}],
-        "materials": [
-            {
-                "pbrMetallicRoughness": {
-                    "baseColorTexture": {"index": 0},
-                    "metallicFactor": 0.0,
-                    "roughnessFactor": 1.0,
-                },
-                "doubleSided": True,
-            }
-        ],
+        "materials": [material],
         "meshes": [
             {
                 "primitives": [
                     {
-                        "attributes": {"POSITION": 0, "TEXCOORD_0": 1},
-                        "indices": 2,
+                        "attributes": attributes,
+                        "indices": face_accessor,
                         "material": 0,
                         "mode": 4,
                     }
@@ -101,6 +116,8 @@ def _save_textured_glb(
         "scenes": [{"nodes": [0]}],
         "scene": 0,
     }
+    if extensions_used:
+        gltf["extensionsUsed"] = extensions_used
 
     buffer = b"".join(_pad4(part) for part in buffer_parts)
     gltf["buffers"] = [{"byteLength": len(buffer)}]
@@ -152,7 +169,7 @@ def _smooth_pointmap_surface(
     valid: torch.Tensor,
     iterations: int,
     strength: float,
-    rtol: float,
+    edge_threshold: float,
 ) -> torch.Tensor:
     iterations = max(0, int(iterations))
     strength = float(max(0.0, min(1.0, strength)))
@@ -166,7 +183,7 @@ def _smooth_pointmap_surface(
         dtype=xyz_chw.dtype,
         device=xyz_chw.device,
     ).reshape(1, 1, 9, 1, 1)
-    range_sigma = max(0.03, min(abs(float(rtol)) * 0.5, 0.35))
+    range_sigma = max(0.03, min(abs(float(edge_threshold)) * 0.5, 0.5))
     height, width = valid.shape
 
     for _ in range(iterations):
@@ -185,6 +202,55 @@ def _smooth_pointmap_surface(
     return xyz_chw.movedim(0, -1).contiguous()
 
 
+def _filter_triangles_by_quality(
+    vertices: torch.Tensor,
+    triangles: torch.Tensor,
+    max_edge_ratio: float,
+    max_normal_angle: float,
+) -> torch.Tensor:
+    if triangles.numel() == 0:
+        return triangles
+
+    tri_vertices = vertices[triangles]
+    edges = torch.stack(
+        (
+            tri_vertices[:, 1] - tri_vertices[:, 0],
+            tri_vertices[:, 2] - tri_vertices[:, 1],
+            tri_vertices[:, 0] - tri_vertices[:, 2],
+        ),
+        dim=1,
+    )
+    lengths = torch.linalg.norm(edges, dim=2)
+    keep = lengths.min(dim=1).values > 1e-8
+    ratio_limit = float(max_edge_ratio)
+    if ratio_limit > 0:
+        keep &= (lengths.max(dim=1).values / lengths.min(dim=1).values.clamp(min=1e-8)) <= ratio_limit
+
+    angle_limit = float(max_normal_angle)
+    if angle_limit > 0 and angle_limit < 180:
+        normals = torch.cross(edges[:, 0], -edges[:, 2], dim=1)
+        normals = F.normalize(normals, dim=1, eps=1e-8)
+        mean_normal = F.normalize(normals[keep].mean(dim=0, keepdim=True), dim=1, eps=1e-8) if bool(keep.any().item()) else normals[:1]
+        cos_limit = float(np.cos(np.deg2rad(angle_limit)))
+        keep &= (normals @ mean_normal.squeeze(0)) >= cos_limit
+
+    return triangles[keep]
+
+
+def _vertex_normals(vertices: torch.Tensor, faces: torch.Tensor) -> torch.Tensor:
+    normals = torch.zeros_like(vertices)
+    if faces.numel() == 0:
+        normals[:, 2] = 1.0
+        return normals
+    tri_vertices = vertices[faces]
+    face_normals = torch.cross(tri_vertices[:, 1] - tri_vertices[:, 0], tri_vertices[:, 2] - tri_vertices[:, 0], dim=1)
+    face_normals = F.normalize(face_normals, dim=1, eps=1e-8)
+    normals.index_add_(0, faces.reshape(-1), face_normals.repeat_interleave(3, dim=0))
+    normals = F.normalize(normals, dim=1, eps=1e-8)
+    fallback = torch.tensor([0.0, 0.0, 1.0], dtype=normals.dtype).view(1, 3)
+    return torch.where(torch.isfinite(normals).all(dim=1, keepdim=True), normals, fallback)
+
+
 def _mesh_from_pointmap(
     pointmap: torch.Tensor,
     image: torch.Tensor,
@@ -201,14 +267,17 @@ def _mesh_from_pointmap(
     depth_bias: float,
     mesh_smooth_iterations: int,
     mesh_smooth_strength: float,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    smooth_edge_threshold: float,
+    max_edge_ratio: float,
+    max_normal_angle: float,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     mesh_stride = max(1, int(mesh_stride))
     adjusted = _adjust_pointmap_geometry(pointmap, depth_scale=depth_scale, xy_scale=xy_scale, depth_bias=depth_bias)
     _, height, width = adjusted.shape
     xyz = adjusted.movedim(0, -1)[::mesh_stride, ::mesh_stride].contiguous()
     sampled_mask = mask[::mesh_stride, ::mesh_stride] if mask is not None else None
     valid = _valid_depth_mask(xyz, sampled_mask, rtol, min_depth, max_depth)
-    xyz = _smooth_pointmap_surface(xyz, valid, mesh_smooth_iterations, mesh_smooth_strength, rtol)
+    xyz = _smooth_pointmap_surface(xyz, valid, mesh_smooth_iterations, mesh_smooth_strength, smooth_edge_threshold)
     mesh_height, mesh_width = valid.shape
 
     rows = torch.arange(mesh_height - 1).view(-1, 1).expand(-1, mesh_width - 1)
@@ -223,6 +292,7 @@ def _mesh_from_pointmap(
     ).long()
     flat_valid = valid.reshape(-1)
     triangles = triangles[flat_valid[triangles].all(dim=1)]
+    triangles = _filter_triangles_by_quality(xyz.reshape(-1, 3), triangles, max_edge_ratio, max_normal_angle)
     if triangles.numel() == 0:
         raise RuntimeError("No pointmap mesh faces survived filtering. Relax rtol/min_depth/max_depth or provide a better mask.")
 
@@ -242,10 +312,11 @@ def _mesh_from_pointmap(
     u_grid, v_grid = torch.meshgrid(x_coords, y_coords, indexing="xy")
     uvs = torch.stack((u_grid, v_grid), dim=-1).reshape(-1, 2)[used]
     faces = torch.searchsorted(used, triangles)
+    normals = _vertex_normals(vertices, faces)
 
     texture = _comfy_image(image)[0, :, :, :3]
     texture = (texture.detach().cpu().clamp(0, 1).numpy() * 255.0).round().astype(np.uint8)
-    return vertices.numpy(), uvs.numpy(), faces.numpy(), texture
+    return vertices.numpy(), uvs.numpy(), faces.numpy(), texture, normals.numpy()
 
 
 def _output_path(filename_prefix: str, index: int) -> Path:
@@ -297,6 +368,10 @@ def _export_pointmap_models(
     splat_max_points: int,
     mesh_smooth_iterations: int = 0,
     mesh_smooth_strength: float = 0.0,
+    smooth_edge_threshold: float = 0.35,
+    max_edge_ratio: float = 8.0,
+    max_normal_angle: float = 0.0,
+    unlit_material: bool = True,
 ) -> tuple[list[Path], list[dict[str, str]]]:
     pointmaps = _coerce_pointmap_batch(pointmap)
     images = _comfy_image(image)
@@ -332,7 +407,7 @@ def _export_pointmap_models(
             progress.update()
             continue
 
-        vertices, uvs, faces, texture = _mesh_from_pointmap(
+        vertices, uvs, faces, texture, normals = _mesh_from_pointmap(
             pointmaps[index],
             image_i,
             mask_i,
@@ -348,9 +423,12 @@ def _export_pointmap_models(
             depth_bias,
             mesh_smooth_iterations,
             mesh_smooth_strength,
+            smooth_edge_threshold,
+            max_edge_ratio,
+            max_normal_angle,
         )
         path = _output_path(filename_prefix, index)
-        _save_textured_glb(vertices, uvs, faces, texture, path)
+        _save_textured_glb(vertices, uvs, faces, texture, path, normals=normals, unlit_material=unlit_material)
         paths.append(path)
         ui_entries.append(_ui_3d_entry(path))
         progress.update()
@@ -383,6 +461,10 @@ class Sapiens2PointmapMeshAdvanced:
                 "splat_max_points": ("INT", {"default": 30000, "min": 1000, "max": 100000, "step": 1000}),
                 "mesh_smooth_iterations": ("INT", {"default": 4, "min": 0, "max": 16, "step": 1}),
                 "mesh_smooth_strength": ("FLOAT", {"default": 0.35, "min": 0.0, "max": 1.0, "step": 0.01}),
+                "smooth_edge_threshold": ("FLOAT", {"default": 0.35, "min": 0.01, "max": 1.0, "step": 0.01}),
+                "max_edge_ratio": ("FLOAT", {"default": 8.0, "min": 0.0, "max": 50.0, "step": 0.1}),
+                "max_normal_angle": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 180.0, "step": 1.0}),
+                "unlit_material": ("BOOLEAN", {"default": True}),
             },
             "optional": {"mask": ("MASK",)},
         }
@@ -414,6 +496,10 @@ class Sapiens2PointmapMeshAdvanced:
         splat_max_points: int = 30000,
         mesh_smooth_iterations: int = 4,
         mesh_smooth_strength: float = 0.35,
+        smooth_edge_threshold: float = 0.35,
+        max_edge_ratio: float = 8.0,
+        max_normal_angle: float = 0.0,
+        unlit_material: bool = True,
         mask=None,
     ):
         _require_task(model, "pointmap")
@@ -439,6 +525,10 @@ class Sapiens2PointmapMeshAdvanced:
             splat_max_points,
             mesh_smooth_iterations,
             mesh_smooth_strength,
+            smooth_edge_threshold,
+            max_edge_ratio,
+            max_normal_angle,
+            unlit_material,
         )
 
         first_path = str(paths[0]) if paths else ""

@@ -165,6 +165,7 @@ Inputs:
 - `camera_lens`: `default`, `wide`, or `telephoto`. `wide` compresses Z depth for wide-angle images that look too deep; `telephoto` expands Z depth for flatter telephoto images.
 - `render_mode`: `points`, `splats`, or `mesh`
 - `quality`: `low`, `mid`, `high`, or `super high`. Used to calculate the point budget for point/splat output and mesh stride for mesh output.
+- `mesh_smoothing`: `off`, `light`, `balanced`, `strong`, or `extra smooth`. Controls edge-aware smoothing when `render_mode` is `mesh`.
 - `mask`: optional mask
 
 Outputs:
@@ -172,7 +173,7 @@ Outputs:
 - `preview`: pointmap/depth-style preview using the selected preview mode
 - `pointmap_glb`: generated `.glb` path list, also shown in ComfyUI's 3D preview UI when available. The output honors the optional input mask, is centered around its bounding box, and is oriented for GLB viewers.
 
-Basic mesh output applies edge-aware surface smoothing and uses a quality-aware edge filter to preserve thin regions while reducing pointmap jitter. Masked exports use a more permissive filter because the foreground is already constrained. Use the advanced node when you need unsmoothed mesh export and manual geometry controls.
+Basic mesh output writes vertex normals, uses an unlit textured material, applies edge-aware surface smoothing, and uses a quality-aware edge filter to preserve thin regions while reducing pointmap jitter. Masked exports use a more permissive filter because the foreground is already constrained. Use the advanced node when you need unsmoothed mesh export and manual geometry controls.
 
 ### Sapiens2 Pointmap Mesh Advanced
 
@@ -198,6 +199,10 @@ Inputs:
 - `splat_size`: splat quad size in scene units. `0` uses automatic sizing.
 - `splat_max_points`: point budget used when `render_mode` is `splats`
 - `mesh_smooth_iterations`, `mesh_smooth_strength`: edge-aware surface smoothing used when `render_mode` is `mesh`
+- `smooth_edge_threshold`: depth-change threshold for smoothing. Lower values preserve sharper edges; higher values smooth across broader depth changes.
+- `max_edge_ratio`: removes skinny triangles when above `0`; `0` disables this filter.
+- `max_normal_angle`: removes faces whose normals deviate too far from the average when between `0` and `180`; `0` disables this filter.
+- `unlit_material`: use an unlit texture material so lighting does not exaggerate small surface ripples
 - `mask`: optional foreground mask
 
 Note: pointmap mesh export reconstructs the visible surface from a single image. It can connect and fill the front-facing pointmap, but it does not infer a true hidden backside or watertight full body/object volume.

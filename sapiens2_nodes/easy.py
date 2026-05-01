@@ -22,12 +22,20 @@ MANUAL_MODEL_SIZE_CHOICES = ("auto",) + MODEL_SIZE_CHOICES
 PREVIEW_MODES = ("result", "overlay", "side_by_side", "source")
 POINT_RENDER_MODES = ("points", "splats", "mesh")
 POINT_QUALITY_CHOICES = ("low", "mid", "high", "super high")
+POINT_SMOOTHING_CHOICES = ("off", "light", "balanced", "strong", "extra smooth")
 CAMERA_DEPTH_PRESETS = ("default", "wide", "telephoto")
 CAMERA_DEPTH_SCALES = {"default": 1.0, "wide": 0.65, "telephoto": 1.25}
 POINT_QUALITY_FACTORS = {"low": 1 / 16, "mid": 1 / 4, "high": 1.0, "super high": 4.0}
 POINT_QUALITY_MESH_STRIDES = {"low": 4, "mid": 2, "high": 1, "super high": 1}
 POINT_QUALITY_RTOL = {"low": 0.35, "mid": 0.5, "high": 0.65, "super high": 0.8}
 POINT_QUALITY_MASK_RTOL = {"low": 0.8, "mid": 0.9, "high": 1.0, "super high": 1.0}
+POINT_SMOOTHING_PRESETS = {
+    "off": (0, 0.0),
+    "light": (2, 0.22),
+    "balanced": (4, 0.35),
+    "strong": (6, 0.45),
+    "extra smooth": (8, 0.55),
+}
 SEG_GROUPS = {
     "Background": {"all": (0,)},
     "Apparel": {"all": (1,)},
@@ -255,6 +263,10 @@ def _point_quality_mesh_stride(quality: str) -> int:
 def _point_quality_rtol(quality: str, has_mask: bool) -> float:
     values = POINT_QUALITY_MASK_RTOL if has_mask else POINT_QUALITY_RTOL
     return values.get(str(quality), values["mid"])
+
+
+def _point_smoothing_preset(name: str) -> tuple[int, float]:
+    return POINT_SMOOTHING_PRESETS.get(str(name), POINT_SMOOTHING_PRESETS["balanced"])
 
 
 def _output_root() -> Path:
@@ -1128,6 +1140,7 @@ class Sapiens2Pointmap:
                 "camera_lens": (CAMERA_DEPTH_PRESETS, {"default": "default"}),
                 "render_mode": (POINT_RENDER_MODES, {"default": "points"}),
                 "quality": (POINT_QUALITY_CHOICES, {"default": "mid"}),
+                "mesh_smoothing": (POINT_SMOOTHING_CHOICES, {"default": "balanced"}),
             },
             "optional": {"mask": ("MASK",)},
         }
@@ -1145,12 +1158,14 @@ class Sapiens2Pointmap:
         camera_lens: str = "default",
         render_mode: str = "points",
         quality: str = "mid",
+        mesh_smoothing: str = "balanced",
         mask=None,
     ):
         _require_task(model, "pointmap")
         preview, _, _, raw = Sapiens2DenseInference().run(model, image, mask=mask)
         from .pointmap_advanced import _export_pointmap_models
 
+        smooth_iterations, smooth_strength = _point_smoothing_preset(mesh_smoothing)
         paths, ui_entries = _export_pointmap_models(
             raw,
             image,
@@ -1170,8 +1185,12 @@ class Sapiens2Pointmap:
             _point_quality_max_points(image, quality),
             0.0,
             30000,
-            4,
+            smooth_iterations,
+            smooth_strength,
             0.35,
+            8.0,
+            0.0,
+            True,
         )
         return {
             "ui": {"3d": ui_entries},
