@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import json
 import struct
 from io import BytesIO
@@ -23,6 +25,7 @@ PREVIEW_MODES = ("result", "overlay", "side_by_side", "source")
 POINT_RENDER_MODES = ("points", "splats", "mesh")
 POINT_QUALITY_CHOICES = ("low", "mid", "high", "super high")
 POINT_SMOOTHING_CHOICES = ("off", "light", "balanced", "strong", "extra smooth")
+POINT_NORMAL_DETAIL_CHOICES = ("off", "subtle", "balanced", "strong")
 CAMERA_DEPTH_PRESETS = ("default", "wide", "telephoto")
 CAMERA_DEPTH_SCALES = {"default": 1.0, "wide": 0.65, "telephoto": 1.25}
 POINT_QUALITY_FACTORS = {"low": 1 / 16, "mid": 1 / 4, "high": 1.0, "super high": 4.0}
@@ -36,6 +39,7 @@ POINT_SMOOTHING_PRESETS = {
     "strong": (6, 0.45),
     "extra smooth": (8, 0.55),
 }
+POINT_NORMAL_DETAIL_STRENGTHS = {"off": 0.0, "subtle": 0.35, "balanced": 0.65, "strong": 0.9}
 SEG_GROUPS = {
     "Background": {"all": (0,)},
     "Apparel": {"all": (1,)},
@@ -269,6 +273,10 @@ def _point_smoothing_preset(name: str) -> tuple[int, float]:
     return POINT_SMOOTHING_PRESETS.get(str(name), POINT_SMOOTHING_PRESETS["balanced"])
 
 
+def _point_normal_detail_strength(name: str) -> float:
+    return POINT_NORMAL_DETAIL_STRENGTHS.get(str(name), POINT_NORMAL_DETAIL_STRENGTHS["balanced"])
+
+
 def _output_root() -> Path:
     try:
         import folder_paths
@@ -441,8 +449,7 @@ def _write_pointmap_glb(
     count = int(valid.sum().item())
     path = _unique_path(filename_prefix or "pointmap", ".glb")
     if count == 0:
-        path.write_bytes(b"")
-        return str(path)
+        raise RuntimeError("No valid pointmap points survived filtering. Relax min_depth/max_depth or provide a less restrictive mask.")
 
     flat_valid = valid.reshape(-1)
     valid_indices = flat_valid.nonzero(as_tuple=False).flatten()
@@ -462,8 +469,7 @@ def _write_pointmap_glb(
         scene_valid = torch.isfinite(points).all(dim=0) & (points[2] > 0)
         center_source = points.permute(1, 2, 0).reshape(-1, 3)[scene_valid.reshape(-1)]
     if center_source.numel() == 0:
-        path.write_bytes(b"")
-        return str(path)
+        raise RuntimeError("No valid pointmap points are available for GLB centering.")
 
     center_offset = _pointmap_center_offset(center_source)
     vertices = _orient_pointmap_vertices(raw_vertices, center_offset=center_offset)
@@ -1118,15 +1124,15 @@ class Sapiens2Normal:
             "optional": {"mask": ("MASK",)},
         }
 
-    RETURN_TYPES = ("IMAGE",)
-    RETURN_NAMES = ("normal_map",)
+    RETURN_TYPES = ("IMAGE", "IMAGE")
+    RETURN_NAMES = ("normal_map", "preview")
     FUNCTION = "run"
     CATEGORY = "Sapiens2"
 
     def run(self, model, image, preview_mode: str = "result", mask=None):
         _require_task(model, "normal")
-        preview, _, _, _ = Sapiens2DenseInference().run(model, image, mask=mask)
-        return (_format_preview(image, preview, preview_mode),)
+        normal_map, _, _, _ = Sapiens2DenseInference().run(model, image, mask=mask)
+        return (normal_map, _format_preview(image, normal_map, preview_mode))
 
 
 class Sapiens2Pointmap:
@@ -1141,8 +1147,9 @@ class Sapiens2Pointmap:
                 "render_mode": (POINT_RENDER_MODES, {"default": "points"}),
                 "quality": (POINT_QUALITY_CHOICES, {"default": "mid"}),
                 "mesh_smoothing": (POINT_SMOOTHING_CHOICES, {"default": "balanced"}),
+                "normal_detail": (POINT_NORMAL_DETAIL_CHOICES, {"default": "balanced"}),
             },
-            "optional": {"mask": ("MASK",)},
+            "optional": {"mask": ("MASK",), "normal_map": ("IMAGE",)},
         }
 
     RETURN_TYPES = ("IMAGE", "STRING")
@@ -1159,7 +1166,9 @@ class Sapiens2Pointmap:
         render_mode: str = "points",
         quality: str = "mid",
         mesh_smoothing: str = "balanced",
+        normal_detail: str = "balanced",
         mask=None,
+        normal_map=None,
     ):
         _require_task(model, "pointmap")
         preview, _, _, raw = Sapiens2DenseInference().run(model, image, mask=mask)
@@ -1190,7 +1199,11 @@ class Sapiens2Pointmap:
             0.35,
             8.0,
             0.0,
-            True,
+            normal_map is None or _point_normal_detail_strength(normal_detail) <= 0.0,
+            normal_map,
+            _point_normal_detail_strength(normal_detail),
+            False,
+            0.5,
         )
         return {
             "ui": {"3d": ui_entries},

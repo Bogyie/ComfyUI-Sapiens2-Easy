@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import json
 import struct
 from pathlib import Path
@@ -35,11 +37,14 @@ def _save_textured_glb(
     path: Path,
     normals: np.ndarray | None = None,
     unlit_material: bool = True,
+    normal_texture_rgb: np.ndarray | None = None,
+    normal_texture_scale: float = 0.5,
 ) -> None:
     vertices = np.ascontiguousarray(vertices, dtype=np.float32)
     uvs = np.ascontiguousarray(uvs, dtype=np.float32)
     faces = np.ascontiguousarray(faces, dtype=np.uint32)
     normals = None if normals is None else np.ascontiguousarray(normals, dtype=np.float32)
+    normal_texture_rgb = None if normal_texture_rgb is None else np.ascontiguousarray(normal_texture_rgb, dtype=np.uint8)
 
     buffer_parts: list[bytes] = []
     buffer_views = []
@@ -59,6 +64,7 @@ def _save_textured_glb(
     normal_view = add_buffer_view(normals.tobytes(), 34962) if normals is not None else None
     face_view = add_buffer_view(faces.tobytes(), 34963)
     image_view = add_buffer_view(_png_bytes(texture_rgb))
+    normal_image_view = add_buffer_view(_png_bytes(normal_texture_rgb)) if normal_texture_rgb is not None else None
 
     accessors = [
         {
@@ -90,15 +96,23 @@ def _save_textured_glb(
     if unlit_material:
         material["extensions"] = {"KHR_materials_unlit": {}}
         extensions_used.append("KHR_materials_unlit")
+    if normal_image_view is not None:
+        material["normalTexture"] = {"index": 1, "scale": float(max(0.0, normal_texture_scale))}
+
+    images = [{"bufferView": image_view, "mimeType": "image/png"}]
+    textures = [{"sampler": 0, "source": 0}]
+    if normal_image_view is not None:
+        images.append({"bufferView": normal_image_view, "mimeType": "image/png"})
+        textures.append({"sampler": 0, "source": 1})
 
     gltf = {
         "asset": {"version": "2.0", "generator": "ComfyUI-Sapiens2-Easy"},
         "buffers": [],
         "bufferViews": buffer_views,
         "accessors": accessors,
-        "images": [{"bufferView": image_view, "mimeType": "image/png"}],
-        "samplers": [{"magFilter": 9729, "minFilter": 9987, "wrapS": 10497, "wrapT": 10497}],
-        "textures": [{"sampler": 0, "source": 0}],
+        "images": images,
+        "samplers": [{"magFilter": 9729, "minFilter": 9729, "wrapS": 10497, "wrapT": 10497}],
+        "textures": textures,
         "materials": [material],
         "meshes": [
             {
@@ -143,6 +157,42 @@ def _prepare_mask(mask: torch.Tensor | None, batch_size: int, height: int, width
     if mask.shape[-2:] != (height, width):
         mask = F.interpolate(mask.unsqueeze(1), size=(height, width), mode="nearest").squeeze(1)
     return mask > 0.5
+
+
+def _coerce_normal_image(normal_map, batch_size: int, height: int, width: int) -> torch.Tensor | None:
+    if normal_map is None:
+        return None
+    normals = normal_map.detach().float().cpu()
+    if normals.ndim == 3:
+        normals = normals.unsqueeze(0)
+    if normals.ndim != 4:
+        raise ValueError(f"Expected normal_map IMAGE shape [H,W,C] or [B,H,W,C], got {tuple(normals.shape)}.")
+    if normals.shape[-1] < 3:
+        raise ValueError("normal_map must have at least 3 channels.")
+    normals = normals[..., :3]
+    if normals.shape[0] == 1 and batch_size > 1:
+        normals = normals.repeat(batch_size, 1, 1, 1)
+    if normals.shape[0] != batch_size:
+        raise ValueError(f"Normal map batch size ({normals.shape[0]}) does not match image batch size ({batch_size}).")
+    if normals.shape[1:3] != (height, width):
+        normals = F.interpolate(normals.movedim(-1, 1), size=(height, width), mode="bilinear", align_corners=False).movedim(1, -1)
+    if float(normals.amin().item()) >= 0.0 and float(normals.amax().item()) <= 1.0:
+        normals = normals * 2.0 - 1.0
+    return F.normalize(normals, dim=-1, eps=1e-6)
+
+
+def _normal_texture_image(normal_map, batch_index: int) -> np.ndarray | None:
+    if normal_map is None:
+        return None
+    normals = normal_map.detach().float().cpu()
+    if normals.ndim == 3:
+        normals = normals.unsqueeze(0)
+    if normals.ndim != 4 or normals.shape[-1] < 3:
+        return None
+    selected = normals[min(batch_index, normals.shape[0] - 1), :, :, :3]
+    if float(selected.amin().item()) < 0.0 or float(selected.amax().item()) > 1.0:
+        selected = (selected + 1.0) * 0.5
+    return (selected.clamp(0, 1).numpy() * 255.0).round().astype(np.uint8)
 
 
 def _valid_depth_mask(
@@ -251,6 +301,26 @@ def _vertex_normals(vertices: torch.Tensor, faces: torch.Tensor) -> torch.Tensor
     return torch.where(torch.isfinite(normals).all(dim=1, keepdim=True), normals, fallback)
 
 
+def _blend_sapiens_normals(
+    geometry_normals: torch.Tensor,
+    normal_map: torch.Tensor | None,
+    used: torch.Tensor,
+    mesh_stride: int,
+    flip_y: bool,
+    flip_z: bool,
+    strength: float,
+) -> torch.Tensor:
+    strength = float(max(0.0, min(1.0, strength)))
+    if normal_map is None or strength <= 0.0:
+        return geometry_normals
+    sampled = normal_map[::mesh_stride, ::mesh_stride].reshape(-1, 3)[used]
+    axis = torch.tensor([1.0, -1.0 if flip_y else 1.0, -1.0 if flip_z else 1.0], dtype=sampled.dtype)
+    sampled = F.normalize(sampled * axis, dim=1, eps=1e-6)
+    blended = geometry_normals * (1.0 - strength) + sampled * strength
+    blended_norm = torch.linalg.norm(blended, dim=1, keepdim=True)
+    return torch.where(blended_norm > 1e-6, blended / blended_norm.clamp(min=1e-6), geometry_normals)
+
+
 def _mesh_from_pointmap(
     pointmap: torch.Tensor,
     image: torch.Tensor,
@@ -270,6 +340,8 @@ def _mesh_from_pointmap(
     smooth_edge_threshold: float,
     max_edge_ratio: float,
     max_normal_angle: float,
+    normal_map: torch.Tensor | None,
+    normal_blend: float,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     mesh_stride = max(1, int(mesh_stride))
     adjusted = _adjust_pointmap_geometry(pointmap, depth_scale=depth_scale, xy_scale=xy_scale, depth_bias=depth_bias)
@@ -313,6 +385,7 @@ def _mesh_from_pointmap(
     uvs = torch.stack((u_grid, v_grid), dim=-1).reshape(-1, 2)[used]
     faces = torch.searchsorted(used, triangles)
     normals = _vertex_normals(vertices, faces)
+    normals = _blend_sapiens_normals(normals, normal_map, used, mesh_stride, flip_y, flip_z, normal_blend)
 
     texture = _comfy_image(image)[0, :, :, :3]
     texture = (texture.detach().cpu().clamp(0, 1).numpy() * 255.0).round().astype(np.uint8)
@@ -372,16 +445,22 @@ def _export_pointmap_models(
     max_edge_ratio: float = 8.0,
     max_normal_angle: float = 0.0,
     unlit_material: bool = True,
+    normal_map=None,
+    normal_blend: float = 0.0,
+    embed_normal_texture: bool = False,
+    normal_texture_strength: float = 0.5,
 ) -> tuple[list[Path], list[dict[str, str]]]:
     pointmaps = _coerce_pointmap_batch(pointmap)
     images = _comfy_image(image)
     masks = _prepare_mask(mask, pointmaps.shape[0], pointmaps.shape[-2], pointmaps.shape[-1])
+    normal_maps = _coerce_normal_image(normal_map, pointmaps.shape[0], pointmaps.shape[-2], pointmaps.shape[-1])
 
     paths: list[Path] = []
     ui_entries = []
     progress = NodeProgress(pointmaps.shape[0])
     for index in range(pointmaps.shape[0]):
         mask_i = masks[index] if masks is not None else None
+        normal_i = normal_maps[index] if normal_maps is not None else None
         image_i = images[min(index, images.shape[0] - 1)].unsqueeze(0)
         if render_mode in {"points", "splats"}:
             path = Path(
@@ -426,9 +505,23 @@ def _export_pointmap_models(
             smooth_edge_threshold,
             max_edge_ratio,
             max_normal_angle,
+            normal_i,
+            normal_blend,
         )
         path = _output_path(filename_prefix, index)
-        _save_textured_glb(vertices, uvs, faces, texture, path, normals=normals, unlit_material=unlit_material)
+        normal_texture = _normal_texture_image(normal_map, index) if embed_normal_texture else None
+        uses_sapiens_normals = normal_i is not None and float(normal_blend) > 0.0
+        _save_textured_glb(
+            vertices,
+            uvs,
+            faces,
+            texture,
+            path,
+            normals=normals,
+            unlit_material=bool(unlit_material and not uses_sapiens_normals and normal_texture is None),
+            normal_texture_rgb=normal_texture,
+            normal_texture_scale=normal_texture_strength,
+        )
         paths.append(path)
         ui_entries.append(_ui_3d_entry(path))
         progress.update()
@@ -464,9 +557,12 @@ class Sapiens2PointmapMeshAdvanced:
                 "smooth_edge_threshold": ("FLOAT", {"default": 0.35, "min": 0.01, "max": 1.0, "step": 0.01}),
                 "max_edge_ratio": ("FLOAT", {"default": 8.0, "min": 0.0, "max": 50.0, "step": 0.1}),
                 "max_normal_angle": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 180.0, "step": 1.0}),
+                "normal_blend": ("FLOAT", {"default": 0.65, "min": 0.0, "max": 1.0, "step": 0.01}),
+                "embed_normal_texture": ("BOOLEAN", {"default": False}),
+                "normal_texture_strength": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 2.0, "step": 0.01}),
                 "unlit_material": ("BOOLEAN", {"default": True}),
             },
-            "optional": {"mask": ("MASK",)},
+            "optional": {"mask": ("MASK",), "normal_map": ("IMAGE",)},
         }
 
     RETURN_TYPES = ("IMAGE", "STRING", "STRING")
@@ -499,8 +595,12 @@ class Sapiens2PointmapMeshAdvanced:
         smooth_edge_threshold: float = 0.35,
         max_edge_ratio: float = 8.0,
         max_normal_angle: float = 0.0,
+        normal_blend: float = 0.65,
+        embed_normal_texture: bool = False,
+        normal_texture_strength: float = 0.5,
         unlit_material: bool = True,
         mask=None,
+        normal_map=None,
     ):
         _require_task(model, "pointmap")
         preview, _, _, raw = Sapiens2DenseInference().run(model, image, mask=mask)
@@ -529,6 +629,10 @@ class Sapiens2PointmapMeshAdvanced:
             max_edge_ratio,
             max_normal_angle,
             unlit_material,
+            normal_map,
+            normal_blend,
+            embed_normal_texture,
+            normal_texture_strength,
         )
 
         first_path = str(paths[0]) if paths else ""

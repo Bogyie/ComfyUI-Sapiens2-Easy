@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import torch
 import torch.nn.functional as F
 
@@ -128,14 +130,14 @@ class Sapiens2NormalAdvanced:
             "optional": {"mask": ("MASK",)},
         }
 
-    RETURN_TYPES = ("IMAGE", "MASK", "SAPIENS2_RESULT")
-    RETURN_NAMES = ("normal_map", "foreground_mask", "result")
+    RETURN_TYPES = ("IMAGE", "IMAGE", "MASK", "SAPIENS2_RESULT")
+    RETURN_NAMES = ("normal_map", "preview", "foreground_mask", "result")
     FUNCTION = "run"
     CATEGORY = "Sapiens2/Advanced"
 
     def run(self, model, image, preview_mode: str = "result", preserve_background: bool = False, mask=None):
         _require_task(model, "normal")
-        preview, foreground_mask, _, raw = Sapiens2DenseInference().run(
+        normal_map, foreground_mask, _, raw = Sapiens2DenseInference().run(
             model,
             image,
             preserve_background=preserve_background,
@@ -145,7 +147,7 @@ class Sapiens2NormalAdvanced:
         input_mask = _match_mask(mask, raw["normal"].shape[0], raw["normal"].shape[-2], raw["normal"].shape[-1])
         if input_mask is not None:
             result["masked_normal"] = raw["normal"] * input_mask.unsqueeze(1)
-        return (_format_preview(image, preview, preview_mode), foreground_mask, result)
+        return (normal_map, _format_preview(image, normal_map, preview_mode), foreground_mask, result)
 
 
 class Sapiens2PoseAdvanced:

@@ -147,11 +147,12 @@ Inputs:
 
 Outputs:
 
-- `normal_map`: normal visualization using the selected preview mode
+- `normal_map`: direct normal visualization output for downstream nodes such as pointmap mesh normal detail
+- `preview`: normal output formatted with the selected preview mode
 
 ### Sapiens2 Normal Advanced
 
-Adds `foreground_mask`, raw `result`, and `preserve_background` for masked workflows.
+Adds `foreground_mask`, raw `result`, and `preserve_background` for masked workflows while keeping `normal_map` and `preview` as separate outputs.
 
 ### Sapiens2 Pointmap
 
@@ -166,14 +167,16 @@ Inputs:
 - `render_mode`: `points`, `splats`, or `mesh`
 - `quality`: `low`, `mid`, `high`, or `super high`. Used to calculate the point budget for point/splat output and mesh stride for mesh output.
 - `mesh_smoothing`: `off`, `light`, `balanced`, `strong`, or `extra smooth`. Controls edge-aware smoothing when `render_mode` is `mesh`.
+- `normal_detail`: `off`, `subtle`, `balanced`, or `strong`. Blends an optional Sapiens2 normal image into mesh vertex normals.
 - `mask`: optional mask
+- `normal_map`: optional normal image, such as the output from `Sapiens2 Normal`, used to improve mesh shading when `render_mode` is `mesh`
 
 Outputs:
 
 - `preview`: pointmap/depth-style preview using the selected preview mode
 - `pointmap_glb`: generated `.glb` path list, also shown in ComfyUI's 3D preview UI when available. The output honors the optional input mask, is centered around its bounding box, and is oriented for GLB viewers.
 
-Basic mesh output writes vertex normals, uses an unlit textured material, applies edge-aware surface smoothing, and uses a quality-aware edge filter to preserve thin regions while reducing pointmap jitter. Masked exports use a more permissive filter because the foreground is already constrained. Use the advanced node when you need unsmoothed mesh export and manual geometry controls.
+Basic mesh output writes vertex normals, uses an unlit textured material when no normal map is connected, applies edge-aware surface smoothing, and uses a quality-aware edge filter to preserve thin regions while reducing pointmap jitter. When `normal_map` is connected, the mesh switches to lit textured shading so Sapiens2 normals can add surface detail. Masked exports use a more permissive filter because the foreground is already constrained. Use the advanced node when you need unsmoothed mesh export and manual geometry controls.
 
 ### Sapiens2 Pointmap Mesh Advanced
 
@@ -202,8 +205,12 @@ Inputs:
 - `smooth_edge_threshold`: depth-change threshold for smoothing. Lower values preserve sharper edges; higher values smooth across broader depth changes.
 - `max_edge_ratio`: removes skinny triangles when above `0`; `0` disables this filter.
 - `max_normal_angle`: removes faces whose normals deviate too far from the average when between `0` and `180`; `0` disables this filter.
+- `normal_blend`: blends an optional Sapiens2 normal image into generated vertex normals. Higher values follow the normal image more strongly.
+- `embed_normal_texture`: embeds the optional normal image as a GLB `normalTexture` for viewers that support it. This is more experimental than vertex normal blending.
+- `normal_texture_strength`: GLB normal texture scale used when `embed_normal_texture` is enabled
 - `unlit_material`: use an unlit texture material so lighting does not exaggerate small surface ripples
 - `mask`: optional foreground mask
+- `normal_map`: optional normal image, such as the output from `Sapiens2 Normal`
 
 Note: pointmap mesh export reconstructs the visible surface from a single image. It can connect and fill the front-facing pointmap, but it does not infer a true hidden backside or watertight full body/object volume.
 
