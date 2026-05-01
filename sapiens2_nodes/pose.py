@@ -6,19 +6,17 @@ import numpy as np
 import torch
 
 from .constants import (
-    ARCH_SPECS,
     POSE_CONFIG_DATASET,
     POSE_CONFIG_RESOLUTION,
     POSE_RTMDET_CONFIG_REL,
     POSE_KEYPOINT_COUNT,
 )
 from .model_loading import (
-    _detect_prefix,
     _ensure_sapiens_importable,
-    _read_checkpoint_state_dict,
     _resolve_device,
     _resolve_dtype,
     get_sapiens_repo_path,
+    inspect_checkpoint_task_arch,
 )
 from .progress import NodeProgress
 from .types import Sapiens2PoseModel
@@ -56,15 +54,10 @@ def _detector_config_path(sapiens_repo_path: str) -> str:
 
 
 def _detect_pose_arch(checkpoint_path: str) -> str:
-    state_dict = _read_checkpoint_state_dict(checkpoint_path)
-    if "decode_head.conv_pose.weight" not in state_dict:
+    task, arch = inspect_checkpoint_task_arch(checkpoint_path)
+    if task != "pose":
         raise ValueError("This checkpoint does not look like a Sapiens2 pose checkpoint.")
-    prefix = _detect_prefix(state_dict)
-    embed_dim = state_dict[f"{prefix}patch_embed.projection.weight"].shape[0]
-    for arch, spec in ARCH_SPECS.items():
-        if spec["embed_dim"] == embed_dim:
-            return arch
-    raise ValueError(f"Unsupported Sapiens2 pose embed dim in checkpoint: {embed_dim}")
+    return arch
 
 
 def _keypoint_names_from_metainfo(metainfo: dict[str, Any]) -> list[str]:

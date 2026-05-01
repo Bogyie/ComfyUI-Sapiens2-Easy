@@ -2,7 +2,7 @@ import importlib
 import os
 import sys
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, Iterable, List
 
 import torch
 
@@ -129,46 +129,98 @@ def _read_checkpoint_state_dict(checkpoint_path: str) -> Dict[str, torch.Tensor]
     return _normalize_state_dict(state_dict)
 
 
-def _detect_prefix(state_dict: Dict[str, torch.Tensor]) -> str:
-    if "backbone.patch_embed.projection.weight" in state_dict:
+def _checkpoint_key_map(keys: Iterable[str]) -> dict[str, str]:
+    original_keys = list(keys)
+    normalized_keys = list(original_keys)
+    changed = True
+    while normalized_keys and changed:
+        changed = False
+        for prefix in ("module.", "_orig_mod."):
+            if all(key.startswith(prefix) for key in normalized_keys):
+                normalized_keys = [key[len(prefix) :] for key in normalized_keys]
+                changed = True
+                break
+    return dict(zip(normalized_keys, original_keys))
+
+
+def _detect_prefix_from_keys(keys: set[str]) -> str:
+    if "backbone.patch_embed.projection.weight" in keys:
         return "backbone."
-    if "patch_embed.projection.weight" in state_dict:
+    if "patch_embed.projection.weight" in keys:
         return ""
     raise ValueError("Could not locate patch_embed.projection.weight in checkpoint.")
 
 
-def _detect_arch(state_dict: Dict[str, torch.Tensor]) -> str:
-    prefix = _detect_prefix(state_dict)
-    embed_dim = state_dict[f"{prefix}patch_embed.projection.weight"].shape[0]
+def _detect_prefix(state_dict: Dict[str, torch.Tensor]) -> str:
+    return _detect_prefix_from_keys(set(state_dict))
+
+
+def _detect_arch_from_embed_dim(embed_dim: int) -> str:
     for arch, spec in ARCH_SPECS.items():
         if spec["embed_dim"] == embed_dim:
             return arch
     raise ValueError(f"Unsupported Sapiens2 embed dim in checkpoint: {embed_dim}")
 
 
-def _detect_task(state_dict: Dict[str, torch.Tensor]) -> str:
+def _detect_arch(state_dict: Dict[str, torch.Tensor]) -> str:
+    prefix = _detect_prefix(state_dict)
+    embed_dim = int(state_dict[f"{prefix}patch_embed.projection.weight"].shape[0])
+    return _detect_arch_from_embed_dim(embed_dim)
+
+
+def _detect_task_from_keys(keys: set[str]) -> str:
     task_keys = {
         "segmentation": "decode_head.conv_seg.weight",
         "normal": "decode_head.conv_normal.weight",
         "pointmap": "decode_head.conv_pointmap.weight",
     }
     for task, key in task_keys.items():
-        if key in state_dict:
+        if key in keys:
             return task
-    if "decode_head.conv_pose.weight" in state_dict:
-        raise ValueError(
-            "This checkpoint is a Sapiens2 pose model. Load it with task=pose."
-        )
+    if "decode_head.conv_pose.weight" in keys:
+        return "pose"
     raise ValueError("Could not infer dense task from checkpoint decode_head keys.")
+
+
+def _detect_task(state_dict: Dict[str, torch.Tensor]) -> str:
+    task = _detect_task_from_keys(set(state_dict))
+    if task == "pose":
+        raise ValueError("This checkpoint is a Sapiens2 pose model. Load it with task=pose.")
+    return task
+
+
+def _safetensors_tensor_shape(handle, tensor_name: str) -> tuple[int, ...]:
+    try:
+        return tuple(int(dim) for dim in handle.get_slice(tensor_name).get_shape())
+    except Exception:
+        return tuple(int(dim) for dim in handle.get_tensor(tensor_name).shape)
+
+
+def _inspect_safetensors_checkpoint(checkpoint_path: str) -> tuple[str, str]:
+    from safetensors import safe_open
+
+    with safe_open(checkpoint_path, framework="pt", device="cpu") as handle:
+        key_map = _checkpoint_key_map(handle.keys())
+        keys = set(key_map)
+        task = _detect_task_from_keys(keys)
+        prefix = _detect_prefix_from_keys(keys)
+        shape = _safetensors_tensor_shape(handle, key_map[f"{prefix}patch_embed.projection.weight"])
+    return task, _detect_arch_from_embed_dim(shape[0])
+
+
+def inspect_checkpoint_task_arch(checkpoint_path: str) -> tuple[str, str]:
+    if checkpoint_path.lower().endswith(".safetensors"):
+        return _inspect_safetensors_checkpoint(checkpoint_path)
+    state_dict = _read_checkpoint_state_dict(checkpoint_path)
+    return _detect_task_from_keys(set(state_dict)), _detect_arch(state_dict)
 
 
 def _resolve_task_arch(
     requested_task: str,
     requested_arch: str,
-    state_dict: Dict[str, torch.Tensor],
+    detected_task: str,
+    detected_arch: str,
 ) -> tuple[str, str]:
-    detected_task = _detect_task(state_dict)
-    detected_arch = _detect_arch(state_dict)
     task = detected_task if requested_task == "auto" else requested_task
     arch = detected_arch if requested_arch == "auto" else requested_arch
     if task != detected_task:
@@ -221,9 +273,11 @@ def load_sapiens2_model(
     progress = NodeProgress(6)
     _ensure_sapiens_importable(sapiens_repo_path)
     progress.update()
-    state_dict = _read_checkpoint_state_dict(checkpoint_path)
+    detected_task, detected_arch = inspect_checkpoint_task_arch(checkpoint_path)
+    if detected_task == "pose":
+        raise ValueError("This checkpoint is a Sapiens2 pose model. Load it with task=pose.")
     progress.update()
-    task, arch = _resolve_task_arch(task, arch, state_dict)
+    task, arch = _resolve_task_arch(task, arch, detected_task, detected_arch)
     config_path = _dense_config_path(sapiens_repo_path, task, arch)
     resolved_device = _resolve_device(device)
     resolved_dtype = _resolve_dtype(dtype, resolved_device)
