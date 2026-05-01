@@ -25,6 +25,7 @@ POINT_QUALITY_CHOICES = ("low", "mid", "high", "super high")
 CAMERA_DEPTH_PRESETS = ("default", "wide", "telephoto")
 CAMERA_DEPTH_SCALES = {"default": 1.0, "wide": 0.65, "telephoto": 1.25}
 POINT_QUALITY_FACTORS = {"low": 1 / 16, "mid": 1 / 4, "high": 1.0, "super high": 4.0}
+POINT_QUALITY_MESH_STRIDES = {"low": 4, "mid": 2, "high": 1, "super high": 1}
 SEG_GROUPS = {
     "Background": {"all": (0,)},
     "Apparel": {"all": (1,)},
@@ -245,6 +246,10 @@ def _point_quality_max_points(image: torch.Tensor, quality: str) -> int:
     return max(1000, int(round(pixels * factor)))
 
 
+def _point_quality_mesh_stride(quality: str) -> int:
+    return POINT_QUALITY_MESH_STRIDES.get(str(quality), POINT_QUALITY_MESH_STRIDES["mid"])
+
+
 def _output_root() -> Path:
     try:
         import folder_paths
@@ -374,6 +379,23 @@ def _pointmap_export_mask(
     return selected > 0.5
 
 
+def _pointmap_valid_mask(
+    points: torch.Tensor,
+    min_depth: float = 0.05,
+    max_depth: float = 25.0,
+    rtol: float = 0.0,
+) -> torch.Tensor:
+    depth = points[2]
+    valid = torch.isfinite(points).all(dim=0) & torch.isfinite(depth)
+    valid &= (depth > float(min_depth)) & (depth < float(max_depth))
+    if float(rtol) > 0:
+        depth_4d = depth.unsqueeze(0).unsqueeze(0)
+        depth_max = F.max_pool2d(depth_4d, kernel_size=3, stride=1, padding=1).squeeze(0).squeeze(0)
+        depth_min = -F.max_pool2d(-depth_4d, kernel_size=3, stride=1, padding=1).squeeze(0).squeeze(0)
+        valid &= ((depth_max - depth_min) / depth.abs().clamp(min=1e-6)) <= float(rtol)
+    return valid
+
+
 def _write_pointmap_glb(
     pointmap: torch.Tensor,
     image: torch.Tensor,
@@ -385,13 +407,16 @@ def _write_pointmap_glb(
     xy_scale: float = 1.0,
     depth_bias: float = 0.0,
     max_points: int = 60000,
+    min_depth: float = 0.05,
+    max_depth: float = 25.0,
+    rtol: float = 0.0,
     filename_prefix: str = "pointmap",
 ) -> str:
     points = _adjust_pointmap_geometry(pointmap, depth_scale=depth_scale, xy_scale=xy_scale, depth_bias=depth_bias)
     image_batch = _comfy_image(image)
     image_rgb = image_batch[0, :, :, :3]
     export_mask = _pointmap_export_mask(mask, int(points.shape[1]), int(points.shape[2]), mask_index)
-    valid = torch.isfinite(points).all(dim=0) & (points[2] > 0)
+    valid = _pointmap_valid_mask(points, min_depth=min_depth, max_depth=max_depth, rtol=rtol)
     if export_mask is not None:
         valid &= export_mask
     count = int(valid.sum().item())
@@ -400,16 +425,19 @@ def _write_pointmap_glb(
         path.write_bytes(b"")
         return str(path)
 
-    stride = max(1, int((max(count, 1) / max_points) ** 0.5))
-    sampled_points = points[:, ::stride, ::stride].permute(1, 2, 0).reshape(-1, 3)
-    sampled_colors = image_rgb[::stride, ::stride].reshape(-1, 3)
-    sampled_valid = valid[::stride, ::stride].reshape(-1)
-    raw_vertices = sampled_points[sampled_valid]
-    raw_colors = sampled_colors[sampled_valid]
-    if raw_vertices.numel() == 0:
-        flat_valid = valid.reshape(-1)
-        raw_vertices = points.permute(1, 2, 0).reshape(-1, 3)[flat_valid]
-        raw_colors = image_rgb.reshape(-1, 3)[flat_valid]
+    flat_valid = valid.reshape(-1)
+    valid_indices = flat_valid.nonzero(as_tuple=False).flatten()
+    if valid_indices.numel() > max(1, int(max_points)):
+        selected = torch.linspace(
+            0,
+            valid_indices.numel() - 1,
+            steps=max(1, int(max_points)),
+            dtype=torch.float32,
+        ).round().long()
+        valid_indices = valid_indices[selected]
+    raw_vertices = points.permute(1, 2, 0).reshape(-1, 3)[valid_indices]
+    raw_colors = image_rgb.reshape(-1, 3)[valid_indices]
+    stride = max(1, int((max(count, 1) / max(1, int(max_points))) ** 0.5))
     center_source = raw_vertices
     if center_source.numel() == 0:
         scene_valid = torch.isfinite(points).all(dim=0) & (points[2] > 0)
@@ -1122,8 +1150,8 @@ class Sapiens2Pointmap:
             mask,
             render_mode,
             "pointmap",
-            2,
-            0.04,
+            _point_quality_mesh_stride(quality),
+            0.12,
             0.05,
             25.0,
             True,

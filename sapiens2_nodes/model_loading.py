@@ -234,9 +234,13 @@ def init_sapiens_model(
     if "init_cfg" in config.model["backbone"]:
         config.model["backbone"].pop("init_cfg")
 
-    model = MODELS.build(config.model)
-    if dtype != torch.float32:
-        model.to(dtype=dtype)
+    previous_dtype = torch.get_default_dtype()
+    try:
+        if dtype != torch.float32:
+            torch.set_default_dtype(dtype)
+        model = MODELS.build(config.model)
+    finally:
+        torch.set_default_dtype(previous_dtype)
     built_at = time.perf_counter()
     if progress is not None:
         progress.update()

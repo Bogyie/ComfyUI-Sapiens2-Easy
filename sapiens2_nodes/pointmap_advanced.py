@@ -308,6 +308,9 @@ def _export_pointmap_models(
                     xy_scale=xy_scale,
                     depth_bias=depth_bias,
                     max_points=splat_max_points if render_mode == "splats" else max(1000, int(max_points)),
+                    min_depth=min_depth,
+                    max_depth=max_depth,
+                    rtol=0.0,
                     filename_prefix=filename_prefix,
                 )
             )

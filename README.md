@@ -164,7 +164,7 @@ Inputs:
 - `preview_mode`: `result`, `overlay`, `side_by_side`, `source`
 - `camera_lens`: `default`, `wide`, or `telephoto`. `wide` compresses Z depth for wide-angle images that look too deep; `telephoto` expands Z depth for flatter telephoto images.
 - `render_mode`: `points`, `splats`, or `mesh`
-- `quality`: `low`, `mid`, `high`, or `super high`. Used to calculate the point budget from image resolution when `render_mode` is `points`.
+- `quality`: `low`, `mid`, `high`, or `super high`. Used to calculate the point budget for point/splat output and mesh stride for mesh output.
 - `mask`: optional mask
 
 Outputs:
@@ -172,7 +172,7 @@ Outputs:
 - `preview`: pointmap/depth-style preview using the selected preview mode
 - `pointmap_glb`: generated `.glb` path list, also shown in ComfyUI's 3D preview UI when available. The output honors the optional input mask, is centered around its bounding box, and is oriented for GLB viewers.
 
-Basic mesh output applies light surface smoothing to reduce pointmap jitter. Use the advanced node when you need unsmoothed mesh export and manual geometry controls.
+Basic mesh output applies light surface smoothing and uses a more permissive edge filter to preserve thin regions. Use the advanced node when you need unsmoothed mesh export and manual geometry controls.
 
 ### Sapiens2 Pointmap Mesh Advanced
 
