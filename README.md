@@ -1,363 +1,95 @@
 # ComfyUI-Sapiens2-Easy
 
-ComfyUI custom nodes for Meta Sapiens2, designed around one idea:
+[English](README.md) | [Korean](README.ko.md)
 
-**start easy, stay flexible when you need detail.**
+From one image to masks, normals, 3D pointmaps, and pose, without leaving ComfyUI.
 
-This project wraps Sapiens2 human-centric vision models with a small, practical ComfyUI interface. Pick a task, pick a model size, pick a device, and the loader will use the local model if it exists or download it from Hugging Face when it does not.
+[![GitHub stars](https://img.shields.io/github/stars/Bogyie/ComfyUI-Sapiens2-Easy?style=social)](https://github.com/Bogyie/ComfyUI-Sapiens2-Easy/stargazers)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE.md)
+[![ComfyUI Registry](https://img.shields.io/badge/ComfyUI-Registry-111111)](https://registry.comfy.org/ko/nodes/comfyui-sapiens2-easy)
+[![Sapiens2](https://img.shields.io/badge/Meta-Sapiens2-5b5bd6)](https://github.com/facebookresearch/sapiens2)
 
-## Highlights
+<p align="center">
+  <img src="docs/images/sapiens2-workflow-overview.png" alt="Full Sapiens2 ComfyUI workflow" width="92%" />
+</p>
 
-- **One model loader for every task**
-  Segmentation, normal, pointmap, and pose all use the same loader interface.
+Build a full human-analysis graph with segmentation, normal estimation, pointmap/GLB export, and pose outputs.
 
-- **Auto download, auto reuse**
-  Models are downloaded into `ComfyUI/models/sapiens2/` and reused on the next run. Download, model loading, batch inference, pose detection, and pointmap GLB export progress are shown in ComfyUI when supported.
+<table>
+  <tr>
+    <td width="50%"><img src="docs/images/sapiens2-pointmap-render-modes.png" alt="Sapiens2 pointmap render modes" /></td>
+    <td width="50%"><img src="docs/images/sapiens2-pose-targets.png" alt="Sapiens2 pose target examples" /></td>
+  </tr>
+  <tr>
+    <td align="center"><strong>Export pointmaps as points, splats, or textured mesh GLB.</strong></td>
+    <td align="center"><strong>Generate pose outputs for BODY_25, COCO_18, 308-keypoint, hands, and face.</strong></td>
+  </tr>
+</table>
 
-- **Beginner-friendly segmentation selection**
-  Add part rows visually instead of editing JSON. Pick a part group, choose detail, and get a ready-to-use merged mask.
+**ComfyUI-Sapiens2-Easy** turns Meta Sapiens2 into a small set of ComfyUI-native nodes. Pick a task, model size, and device, then chain the outputs into masks, normal maps, 3D previews, GLB files, or pose JSON.
 
-- **Smart body-part groups**
-  Left/right and upper/lower labels are grouped into natural choices like `Hand`, `Arm`, `Leg`, `Clothing`, `Face`, and `Mouth`.
+## Why Use It
 
-- **Useful outputs by default**
-  Segmentation returns `preview`, `merged_mask`, `masks`, and `labels`. Pointmap exports GLB. Pose returns a preview and OpenPose-style JSON.
+- **One loader for every task**: segmentation, normal, pointmap, and pose all share the same model loading flow.
+- **Auto download and reuse**: official Hugging Face weights are saved under `ComfyUI/models/sapiens2/`.
+- **Mask-first human workflows**: segment the person, then feed that mask into normal or pointmap nodes.
+- **Single-image 3D export**: export pointmaps as points, splats, or textured `.glb` meshes.
+- **Pose outputs for downstream tools**: generate `BODY_25`, `COCO_18`, `308-keypoint`, hand, and face targets.
+- **ComfyUI-safe install path**: the installer avoids silently replacing your PyTorch/CUDA runtime stack.
 
-- **ComfyUI environment safe install**
-  The installer avoids silently replacing your PyTorch, CUDA, xformers, or related ComfyUI runtime stack.
+## What It Supports
 
-## Supported Tasks
-
-| Task | What You Get |
+| Task | Output |
 | --- | --- |
-| Segmentation | Body-part masks, merged mask, selected-area preview, raw labels |
-| Normal | Surface normal map |
-| Pointmap | Depth-style preview plus `.glb` export as points, splats, or mesh |
-| Pose | 308-keypoint pose preview plus selectable OpenPose-compatible outputs |
+| **Segmentation** | Body-part masks, merged mask, selected-area preview, raw labels |
+| **Normal** | Sapiens2 surface normal map |
+| **Pointmap** | Depth-style preview and `.glb` export as points, splats, or mesh |
+| **Pose** | 308-keypoint Sapiens2 pose plus OpenPose-style image and JSON outputs |
 
-Supported model sizes:
+Supported model sizes: `0.4b`, `0.8b`, `1b`, `5b`
 
-```text
-0.4b, 0.8b, 1b, 5b
-```
+## Start Here
 
-Supported devices:
+| Link | What It Is |
+| --- | --- |
+| [Install and setup](docs/GUIDE.md) | Full usage guide with install notes, model behavior, node details, and troubleshooting |
+| [Korean guide](docs/GUIDE.ko.md) | 한국어 상세 가이드 |
+| [ComfyUI Registry](https://registry.comfy.org/ko/nodes/comfyui-sapiens2-easy) | Registry listing for this node pack |
 
-```text
-auto, cuda, mps, cpu
-```
-
-`auto` prefers CUDA when available, otherwise CPU. It does not automatically select MPS because some PyTorch/MPS combinations can produce incorrect Sapiens2 segmentation label maps. You can still choose `mps` manually.
-
-## Nodes
-
-### Sapiens2 Model Loader
-
-Loads the requested model, downloading it first if needed.
-
-Options:
-
-- `task`: `segmentation`, `normal`, `pointmap`, `pose`
-- `model_size`: `0.4b`, `0.8b`, `1b`, `5b`
-- `device`: `auto`, `cuda`, `mps`, `cpu`
-
-Outputs:
-
-- `model`: task-aware `SAPIENS2_MODEL`
-
-### Sapiens2 Manual Model Loader
-
-Loads a checkpoint from a path you provide. Use this when you manage model files yourself or cannot download through Hugging Face from the ComfyUI environment.
-
-Options:
-
-- `task`: `segmentation`, `normal`, `pointmap`, `pose`
-- `checkpoint_path`: local `.safetensors` or checkpoint path
-- `model_size`: `auto`, `0.4b`, `0.8b`, `1b`, `5b`
-- `device`: `auto`, `cuda`, `mps`, `cpu`
-- `detector_path`: optional pose detector path. If empty for pose, an already-downloaded default detector is used.
-
-Outputs:
-
-- `model`: task-aware `SAPIENS2_MODEL`
-
-### Sapiens2 Segmentation
-
-Runs Sapiens2 body segmentation and returns Comfy-friendly mask outputs.
-
-Inputs:
-
-- `model`: segmentation model
-- `image`: input image
-
-Options:
-
-- `invert`: invert the merged mask
-- `parts`: visual part rows in the node UI
-
-Outputs:
-
-- `preview`: input image with selected parts overlaid
-- `merged_mask`: one mask merged from enabled rows
-- `masks`: mask batch for selected labels
-- `labels`: raw class-id data and label metadata
-
-Segmentation part rows are intentionally compact:
+Recommended first graph:
 
 ```text
-<enable> <part group> <detail> <remove>
+Image Load
+  -> Sapiens2 Segmentation
+  -> Sapiens2 Normal
+  -> Sapiens2 Pointmap
+  -> ComfyUI 3D Preview
 ```
 
-Examples:
+Good first settings: `model_size = 1b`, `device = cuda`, `quality = high`, `mesh_smoothing = balanced`.
 
-- `Face / all`: face-neck + eyeglass + lip + teeth + tongue
-- `Face / skin`: face-neck only
-- `Mouth / all`: lip + teeth + tongue
-- `Arm / left lower`: left lower arm
-- `Leg / upper`: both upper legs
-- `Clothing / upper`: upper clothing
+## Node Set
 
-If no part rows are added, the node merges all foreground body parts.
+| Easy Nodes | Advanced Nodes |
+| --- | --- |
+| Sapiens2 Model Loader | Sapiens2 Segmentation Advanced |
+| Sapiens2 Manual Model Loader | Sapiens2 Normal Advanced |
+| Sapiens2 Segmentation | Sapiens2 Pointmap Mesh Advanced |
+| Sapiens2 Normal | Sapiens2 Pose Advanced |
+| Sapiens2 Pointmap |  |
+| Sapiens2 Pose |  |
 
-### Sapiens2 Segmentation Advanced
+## Scope
 
-Use this when you need the same segmentation output with extra control.
+This repository is a ComfyUI adapter around Meta Sapiens2. It does not train, modify, or redistribute the official Sapiens2 models. Model weights and upstream materials are governed by Meta's Sapiens2 license.
 
-Additional options:
+## Credits
 
-- `overlay_opacity`: preview overlay strength
-- `preserve_background`: keep the original background outside the optional input mask
-- `mask`: optional input mask limiting the output area
-
-Additional outputs:
-
-- `foreground_mask`: full foreground mask from the segmentation model
-- `result`: raw Sapiens2 inference metadata
-
-### Sapiens2 Normal
-
-Runs normal estimation.
-
-Inputs:
-
-- `model`: normal model
-- `image`: input image
-- `preview_mode`: `result`, `overlay`, `side_by_side`, `source`
-- `mask`: optional mask
-
-Outputs:
-
-- `normal_map`: direct normal visualization output for downstream nodes such as pointmap mesh normal detail
-- `preview`: normal output formatted with the selected preview mode
-
-### Sapiens2 Normal Advanced
-
-Adds `foreground_mask`, raw `result`, and `preserve_background` for masked workflows while keeping `normal_map` and `preview` as separate outputs.
-
-### Sapiens2 Pointmap
-
-Runs pointmap estimation and writes a GLB as points, splats, or a textured mesh.
-
-Inputs:
-
-- `model`: pointmap model
-- `image`: input image
-- `preview_mode`: `result`, `overlay`, `side_by_side`, `source`
-- `camera_lens`: `default`, `wide`, or `telephoto`. `wide` compresses Z depth for wide-angle images that look too deep; `telephoto` expands Z depth for flatter telephoto images.
-- `render_mode`: `points`, `splats`, or `mesh`
-- `quality`: `low`, `mid`, `high`, or `super high`. Used to calculate the point budget for point/splat output and mesh stride for mesh output.
-- `mesh_smoothing`: `off`, `light`, `balanced`, `strong`, or `extra smooth`. Controls edge-aware smoothing when `render_mode` is `mesh`.
-- `normal_detail`: `off`, `subtle`, `balanced`, or `strong`. Blends an optional Sapiens2 normal image into mesh vertex normals.
-- `mask`: optional mask
-- `normal_map`: optional normal image, such as the output from `Sapiens2 Normal`, used to improve mesh shading when `render_mode` is `mesh`
-
-Outputs:
-
-- `preview`: pointmap/depth-style preview using the selected preview mode
-- `pointmap_glb`: generated `.glb` path list, also shown in ComfyUI's 3D preview UI when available. The output honors the optional input mask, is centered around its bounding box, and is oriented for GLB viewers.
-
-Basic mesh output writes vertex normals, uses an unlit textured material when no normal map is connected, applies edge-aware surface smoothing, and uses a quality-aware edge filter to preserve thin regions while reducing pointmap jitter. When `normal_map` is connected, the mesh switches to lit textured shading so Sapiens2 normals can add surface detail. Masked exports use a more permissive filter because the foreground is already constrained. Use the advanced node when you need unsmoothed mesh export and manual geometry controls.
-
-### Sapiens2 Pointmap Mesh Advanced
-
-Runs pointmap estimation and writes a GLB for 3D preview/export workflows, with additional controls for point, splat, or textured mesh output. Mesh mode produces connected triangles with UVs and the source image embedded as texture.
-
-Inputs:
-
-- `model`: pointmap model
-- `image`: input image used for both inference and texture
-- `preview_mode`: `result`, `overlay`, `side_by_side`, `source`
-- `render_mode`: `points`, `splats`, or `mesh`
-- `filename_prefix`: output filename prefix
-- `mesh_stride`: mesh resolution step. `1` is highest detail, higher values are lighter.
-- `rtol`: 3x3 depth-jump tolerance for removing silhouette/edge triangles. Higher values preserve more thin regions; lower values reject more noisy edge faces.
-- `min_depth`, `max_depth`: valid Z range
-- `center_mesh`: center vertices around their bounding box
-- `flip_y`: flip the vertical axis for a conventional GLB Y-up view
-- `flip_z`: flip the depth axis for conventional GLB front/back orientation
-- `depth_scale`: scale Z depth before mesh or splat export. Values below `1.0` reduce exaggerated wide-angle depth.
-- `xy_scale`: scale X/Y before export
-- `depth_bias`: add a constant Z offset before export
-- `max_points`: manual point budget used when `render_mode` is `points`
-- `splat_size`: splat quad size in scene units. `0` uses automatic sizing.
-- `splat_max_points`: point budget used when `render_mode` is `splats`
-- `mesh_smooth_iterations`, `mesh_smooth_strength`: edge-aware surface smoothing used when `render_mode` is `mesh`
-- `smooth_edge_threshold`: depth-change threshold for smoothing. Lower values preserve sharper edges; higher values smooth across broader depth changes.
-- `max_edge_ratio`: removes skinny triangles when above `0`; `0` disables this filter.
-- `max_normal_angle`: removes faces whose normals deviate too far from the average when between `0` and `180`; `0` disables this filter.
-- `normal_blend`: blends an optional Sapiens2 normal image into generated vertex normals. Higher values follow the normal image more strongly.
-- `embed_normal_texture`: embeds the optional normal image as a GLB `normalTexture` for viewers that support it. This is more experimental than vertex normal blending.
-- `normal_texture_strength`: GLB normal texture scale used when `embed_normal_texture` is enabled
-- `unlit_material`: use an unlit texture material so lighting does not exaggerate small surface ripples
-- `mask`: optional foreground mask
-- `normal_map`: optional normal image, such as the output from `Sapiens2 Normal`
-
-Note: pointmap mesh export reconstructs the visible surface from a single image. It can connect and fill the front-facing pointmap, but it does not infer a true hidden backside or watertight full body/object volume.
-
-Outputs:
-
-- `preview`: pointmap/depth-style preview using the selected preview mode
-- `glb_paths`: generated `.glb` path list
-- `model_3d`: first generated `.glb` path, suitable for ComfyUI 3D preview nodes
-
-### Sapiens2 Pose
-
-Runs 308-keypoint pose estimation.
-
-Inputs:
-
-- `model`: pose model
-- `image`: input image
-- `target`: output format for `openpose_image` and `openpose_json`
-  - `BODY_25`
-  - `308-keypoint`
-  - `COCO_18`
-  - `OpenPose hand 21 + 21`
-  - `OpenPose face 70`
-- `bboxes`: optional person boxes. If omitted, people are detected automatically.
-
-Outputs:
-
-- `openpose_image`: black-background pose render for the selected target
-- `preview`: selected target rendered over the source image
-- `openpose_json`: OpenPose-style JSON string for the selected target, with raw 308-keypoint data retained as `sapiens_keypoints_2d`
-
-### Sapiens2 Pose Advanced
-
-Use this when you want OpenPose-compatible outputs but need detector and render controls.
-
-Additional options:
-
-- `keypoint_threshold`: minimum keypoint score used for rendering and masks
-- `bbox_threshold`: person detector score threshold
-- `nms_threshold`: detector non-maximum suppression threshold
-- `radius`, `thickness`: render size controls
-- `fallback_full_image_bbox`: use the full image if no person bbox is detected
-- `flip_test`: run pose flip-test refinement
-- `show_points`, `show_skeleton`: choose what the pose preview renders
-
-Additional outputs:
-
-- `keypoint_mask`: pose keypoint mask
-- `result`: raw 308-keypoint pose result
-
-## Install
-
-Clone or place this repository under `ComfyUI/custom_nodes/`, then run the installer with the same Python environment ComfyUI uses:
-
-```bash
-python install.py
-```
-
-The installer:
-
-- installs this node's Python requirements
-- clones the official Sapiens2 source into `vendor/sapiens2`
-- checks that important runtime packages import correctly
-- protects the existing ComfyUI PyTorch/CUDA/xformers stack with temporary pip constraints
-
-If you already manage dependencies yourself:
-
-```bash
-python install.py --no-deps
-```
-
-If you only want to clone or update the vendored Sapiens2 source:
-
-```bash
-python install.py --skip-deps
-```
-
-If you want to use an existing Sapiens2 checkout:
-
-```bash
-python install.py --skip-clone
-export SAPIENS2_REPO=/path/to/facebookresearch/sapiens2
-```
-
-## PyTorch / CUDA Safety
-
-Do **not** install the upstream Sapiens2 `requirements.txt` directly into your ComfyUI venv unless you know exactly what it will change. It may request a different PyTorch stack than the one ComfyUI is already using.
-
-This repository's `install.py` creates a temporary constraints file that pins the currently installed versions of packages such as:
-
-```text
-torch, torchvision, torchaudio, xformers, triton, NVIDIA CUDA wheels
-```
-
-If pip tries to replace that stack, installation fails instead of silently breaking your ComfyUI environment.
-
-The official Sapiens2 project currently lists Python 3.12+ and PyTorch 2.7+ as its supported environment. These nodes do not force-install PyTorch. Keep the ComfyUI PyTorch build that matches your CUDA/MPS setup.
-
-## Hugging Face Models
-
-`Sapiens2 Model Loader` maps task and size to the official Hugging Face repositories:
-
-```text
-segmentation -> facebook/sapiens2-seg-{0.4b,0.8b,1b,5b}
-normal       -> facebook/sapiens2-normal-{0.4b,0.8b,1b,5b}
-pointmap     -> facebook/sapiens2-pointmap-{0.4b,0.8b,1b,5b}
-pose         -> facebook/sapiens2-pose-{0.4b,0.8b,1b,5b}
-```
-
-Downloaded files are saved under:
-
-```text
-ComfyUI/models/sapiens2/<task>/
-```
-
-Pose detection uses a local RTMDet file when available:
-
-```text
-ComfyUI/models/sapiens2/detector/rtmdet_m.pth
-```
-
-If RTMDet is not available, pose falls back to Hugging Face DETR.
-
-RTMDet support can require `mmdet`, `mmengine`, and `mmcv`. Those packages are not installed automatically because they may affect the PyTorch/CUDA stack.
-
-## Why Easy?
-
-Sapiens2 is powerful, but raw task-specific pipelines can be awkward inside ComfyUI. This project keeps the public node set small:
-
-```text
-Sapiens2 Model Loader
-Sapiens2 Segmentation
-Sapiens2 Normal
-Sapiens2 Pointmap
-Sapiens2 Pose
-```
-
-The goal is not to expose every internal knob on day one. The goal is to make the first workflow obvious, then leave enough detail for advanced masking, compositing, pose, and geometry workflows.
+- Meta Sapiens2: https://github.com/facebookresearch/sapiens2
+- ComfyUI: https://github.com/comfyanonymous/ComfyUI
 
 ## License
 
-This custom node repository's original adapter code and documentation are licensed under the MIT License. See [LICENSE.md](LICENSE.md).
+This repository's original adapter code and documentation are licensed under the MIT License. See [LICENSE.md](LICENSE.md).
 
-That license applies only to this repository's wrapper code and documentation. It does not apply to Meta's Sapiens2 models, weights, upstream source code, algorithms, inference/training/fine-tuning code, or documentation.
-
-Sapiens2 Materials are governed by Meta's Sapiens2 License:
-
-- https://github.com/facebookresearch/sapiens2/blob/main/LICENSE.md
-
-You are responsible for following Meta's license terms before downloading, using, modifying, or distributing Sapiens2 Materials.
+Meta's Sapiens2 models, weights, upstream source code, algorithms, and documentation are governed by Meta's Sapiens2 License: https://github.com/facebookresearch/sapiens2/blob/main/LICENSE.md
